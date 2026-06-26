@@ -2,7 +2,7 @@
   "mcpServers": {
     "openproject_codex": {
       "command": "python3",
-      "args": ["./scripts/openproject_mcp.py"],
+      "args": ["./scripts/run_openproject_mcp.py"],
       "cwd": ".",
       "env": {
         "OPENPROJECT_BASE_URL": "https://your-openproject.example.com",

@@ -203,6 +203,8 @@ cd openproject-codex-plugin
 python3 -m pip install -e .
 ```
 
+If you install through the Codex marketplace, the plugin now bootstraps its own local virtualenv on first run. A manual `pip install` is still useful for local development, but it is no longer required just to use the plugin.
+
 ### 3. Configure the MCP server for Codex
 
 Create or update `.mcp.json`:
