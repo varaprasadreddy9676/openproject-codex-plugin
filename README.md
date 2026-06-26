@@ -16,6 +16,8 @@ Instead of switching back and forth between Codex and the OpenProject UI, you ca
 
 This plugin uses the OpenProject API where possible and falls back to authenticated OpenProject UI workflows where the public API surface is incomplete.
 
+![Project health report demo](assets/project-health-report-demo.png)
+
 ## What This Plugin Is For
 
 Use this plugin when you want to do OpenProject work from inside Codex, such as:
