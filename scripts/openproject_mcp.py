@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
+import re
 from typing import Any
+from html import unescape
 from pathlib import Path
 
 import httpx
@@ -64,6 +67,42 @@ def _headers() -> dict[str, str]:
         "User-Agent": USER_AGENT,
         **_auth_headers(),
     }
+
+
+def _ui_auth() -> tuple[str, str]:
+    username = os.environ.get("OPENPROJECT_UI_USERNAME") or _read_secret_from_env_file("OPENPROJECT_UI_USERNAME_FILE")
+    password = os.environ.get("OPENPROJECT_UI_PASSWORD") or _read_secret_from_env_file("OPENPROJECT_UI_PASSWORD_FILE")
+    if username and password:
+        return username, password
+    raise RuntimeError(
+        "Missing OpenProject UI credentials. Set OPENPROJECT_UI_USERNAME and "
+        "OPENPROJECT_UI_PASSWORD (or their *_FILE variants) to enable UI-backed "
+        "boards, wiki, and meeting tools."
+    )
+
+
+def _ui_session() -> httpx.Client:
+    username, password = _ui_auth()
+    client = httpx.Client(
+        headers={
+            "User-Agent": USER_AGENT,
+            "Accept": "text/vnd.turbo-stream.html,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        timeout=30.0,
+        follow_redirects=True,
+    )
+    login_path = f"{BASE_URL}/login"
+    login_page = client.get(login_path)
+    token = _extract_authenticity_token(login_page.text)
+    response = client.post(
+        login_path,
+        data={"username": username, "password": password, "authenticity_token": token},
+        headers={"Referer": login_path},
+    )
+    if 'data-logged-in="true"' not in response.text and "/logout" not in response.text:
+        client.close()
+        raise RuntimeError("OpenProject UI login failed. Check OPENPROJECT_UI_USERNAME and OPENPROJECT_UI_PASSWORD.")
+    return client
 
 
 def _client() -> httpx.Client:
@@ -250,6 +289,54 @@ def _optional_href(path: str | None) -> dict[str, str] | None:
     if not path:
         return None
     return {"href": path}
+
+
+def _project_ui_identifier(project: str | int | None) -> str:
+    project_obj = _resolve_project(project)
+    return str(project_obj.get("identifier") or project_obj.get("id"))
+
+
+def _project_ui_path(project: str | int | None) -> str:
+    return f"/projects/{_project_ui_identifier(project)}"
+
+
+def _extract_authenticity_token(html: str) -> str:
+    for pattern in (
+        r'name="authenticity_token" value="([^"]+)"',
+        r'name="csrf-token" content="([^"]+)"',
+    ):
+        match = re.search(pattern, html)
+        if match:
+            return unescape(match.group(1))
+    raise RuntimeError("Could not find an authenticity token in the OpenProject UI response.")
+
+
+def _clean_html_text(value: str) -> str:
+    without_tags = re.sub(r"<[^>]+>", " ", value)
+    return " ".join(unescape(without_tags).split())
+
+
+def _extract_hidden_fields(html: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for name, value in re.findall(
+        r'<input[^>]+type="hidden"[^>]+name="([^"]+)"[^>]+value="([^"]*)"',
+        html,
+        flags=re.I,
+    ):
+        fields[unescape(name)] = unescape(value)
+    return fields
+
+
+def _merge_link_overrides(payload_links: dict[str, Any], link_overrides: dict[str, Any] | None) -> None:
+    if not link_overrides:
+        return
+    for key, value in link_overrides.items():
+        if value is None:
+            payload_links[key] = None
+        elif isinstance(value, list):
+            payload_links[key] = [{"href": _normalize_href(str(item))} for item in value]
+        else:
+            payload_links[key] = {"href": _normalize_href(str(value))}
 
 
 def _filter_by_names(key: str, names: list[str] | None) -> list[dict[str, Any]]:
@@ -1299,18 +1386,21 @@ def openproject_create_work_package(
     parent_id: int | None = None,
     start_date: str | None = None,
     due_date: str | None = None,
+    field_overrides: dict[str, Any] | None = None,
+    link_overrides: dict[str, Any] | None = None,
     notify: bool = True,
 ) -> dict[str, Any]:
     """Create a work package in OpenProject."""
     project_obj = _resolve_project(project)
     payload: dict[str, Any] = {
         "subject": subject,
-        "description": _formattable(description),
         "_links": {
             "project": {"href": _link_href(project_obj, "self")},
             "type": {"href": _resource_href("/types", type_name)},
         },
     }
+    if description is not None:
+        payload["description"] = _formattable(description)
     if start_date is not None:
         payload["startDate"] = start_date
     if due_date is not None:
@@ -1323,6 +1413,9 @@ def openproject_create_work_package(
         payload["_links"]["assignee"] = {"href": f"/api/v3/users/{int(assignee_id)}"}
     if parent_id is not None:
         payload["_links"]["parent"] = {"href": f"/api/v3/work_packages/{int(parent_id)}"}
+    _merge_link_overrides(payload["_links"], link_overrides)
+    if field_overrides:
+        payload.update(field_overrides)
 
     created = _api_post("/work_packages", body=payload, params={"notify": str(bool(notify)).lower()})
     return _work_package_summary(created)
@@ -1370,6 +1463,8 @@ def openproject_update_work_package(
     due_date: str | None = None,
     percentage_done: int | None = None,
     note: str | None = None,
+    field_overrides: dict[str, Any] | None = None,
+    link_overrides: dict[str, Any] | None = None,
     notify: bool = True,
 ) -> dict[str, Any]:
     """Update an existing work package using optimistic locking."""
@@ -1395,6 +1490,9 @@ def openproject_update_work_package(
         links["priority"] = {"href": _resource_href("/priorities", priority_name)}
     if assignee_id is not None:
         links["assignee"] = {"href": f"/api/v3/users/{int(assignee_id)}"}
+    _merge_link_overrides(links, link_overrides)
+    if field_overrides:
+        payload.update(field_overrides)
 
     if links:
         payload["_links"] = links
@@ -1638,6 +1736,343 @@ def openproject_get_meeting(meeting_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+def openproject_upload_attachment(
+    container_type: str,
+    container_id: int,
+    file_path: str,
+    file_name: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Upload a binary attachment to a work package, wiki page, meeting, or activity."""
+    normalized_type = container_type.strip().lower()
+    path_map = {
+        "work_package": f"/work_packages/{int(container_id)}/attachments",
+        "wiki_page": f"/wiki_pages/{int(container_id)}/attachments",
+        "meeting": f"/meetings/{int(container_id)}/attachments",
+        "activity": f"/activities/{int(container_id)}/attachments",
+    }
+    api_path = path_map.get(normalized_type)
+    if api_path is None:
+        raise RuntimeError("container_type must be one of: work_package, wiki_page, meeting, activity.")
+    attachment_path = Path(file_path).expanduser()
+    if not attachment_path.exists() or not attachment_path.is_file():
+        raise RuntimeError(f"Attachment file does not exist: {attachment_path}")
+    upload_name = file_name or attachment_path.name
+    metadata: dict[str, Any] = {"fileName": upload_name}
+    if description is not None:
+        metadata["description"] = description
+    mime_type = mimetypes.guess_type(upload_name)[0] or "application/octet-stream"
+    with httpx.Client(
+        headers={"Accept": "application/hal+json", "User-Agent": USER_AGENT, **_auth_headers()},
+        timeout=30.0,
+        follow_redirects=True,
+    ) as client, attachment_path.open("rb") as handle:
+        response = client.post(
+            f"{API_ROOT}{api_path}",
+            files={
+                "metadata": (None, json.dumps(metadata), "application/json"),
+                "file": (upload_name, handle, mime_type),
+            },
+        )
+    return _attachment_summary(_decode_response(response))
+
+
+@mcp.tool()
+def openproject_list_boards(project: str | int | None = None) -> dict[str, Any]:
+    """List boards visible in a project using the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        response = client.get(f"{BASE_URL}{project_path}/boards")
+    finally:
+        client.close()
+    rows = list(
+        re.finditer(
+            r'<a href="/projects/[^"]+/boards/(?P<id>\d+)"[^>]*>(?P<name>[^<]+)</a>.*?data-test-selector="board-remove-(?P=id)"',
+            response.text,
+            flags=re.S,
+        )
+    )
+    return {
+        "count": len(rows),
+        "boards": [
+            {
+                "id": int(match.group("id")),
+                "name": _clean_html_text(match.group("name")),
+                "href": f"{BASE_URL}/projects/{_project_ui_identifier(project)}/boards/{match.group('id')}",
+            }
+            for match in rows
+        ],
+    }
+
+
+@mcp.tool()
+def openproject_create_board(project: str | int | None, name: str, kind: str = "basic") -> dict[str, Any]:
+    """Create a board through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        new_page = client.get(f"{BASE_URL}{project_path}/boards/new")
+        token = _extract_authenticity_token(new_page.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/boards",
+            data={
+                "authenticity_token": token,
+                "boards_grid[name]": name,
+                "boards_grid[attribute]": kind,
+                "button": "",
+            },
+            headers={"Referer": str(new_page.url)},
+            follow_redirects=False,
+        )
+    finally:
+        client.close()
+    location = response.headers.get("location", "")
+    match = re.search(r"/boards/(\d+)", location)
+    return {
+        "id": int(match.group(1)) if match else None,
+        "name": name,
+        "kind": kind,
+        "href": location if location.startswith("http") else f"{BASE_URL}{location}",
+    }
+
+
+@mcp.tool()
+def openproject_delete_board(project: str | int | None, board_id: int) -> dict[str, Any]:
+    """Delete a board through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        index_page = client.get(f"{BASE_URL}{project_path}/boards")
+        token = _extract_authenticity_token(index_page.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/boards/{int(board_id)}",
+            data={"_method": "delete", "authenticity_token": token},
+            headers={"Referer": str(index_page.url)},
+        )
+    finally:
+        client.close()
+    return {"deleted": response.status_code < 400, "boardId": int(board_id)}
+
+
+@mcp.tool()
+def openproject_list_wiki_pages(project: str | int | None = None) -> dict[str, Any]:
+    """List wiki pages in a project using the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        response = client.get(f"{BASE_URL}{project_path}/wiki/index")
+    finally:
+        client.close()
+    pages: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    pattern = rf'href="(/projects/{re.escape(_project_ui_identifier(project))}/wiki/([^"/?#]+))"'
+    for href, slug in re.findall(pattern, response.text):
+        if slug in {"index", "new"} or slug in seen:
+            continue
+        seen.add(slug)
+        pages.append({"slug": slug, "href": f"{BASE_URL}{href}"})
+    return {"count": len(pages), "pages": pages}
+
+
+@mcp.tool()
+def openproject_get_wiki_page_by_slug(project: str | int | None, page_slug: str) -> dict[str, Any]:
+    """Fetch wiki page details by project slug path instead of API id."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        response = client.get(f"{BASE_URL}{project_path}/wiki/{page_slug}")
+    finally:
+        client.close()
+    page_id_match = re.search(r"/api/v3/wiki_pages/(\d+)", response.text)
+    title_match = re.search(r"<title>(.*?)</title>", response.text, flags=re.S)
+    return {
+        "id": int(page_id_match.group(1)) if page_id_match else None,
+        "slug": page_slug,
+        "title": _clean_html_text(title_match.group(1)) if title_match else page_slug,
+        "href": str(response.url),
+    }
+
+
+@mcp.tool()
+def openproject_create_wiki_page(project: str | int | None, title: str, content: str) -> dict[str, Any]:
+    """Create a wiki page through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        new_page = client.get(f"{BASE_URL}{project_path}/wiki")
+        token = _extract_authenticity_token(new_page.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/wiki/new",
+            data={"authenticity_token": token, "page[title]": title, "page[text]": content},
+            headers={"Referer": str(new_page.url)},
+            follow_redirects=False,
+        )
+    finally:
+        client.close()
+    location = response.headers.get("location", "")
+    return {
+        "title": title,
+        "slug": location.rstrip("/").split("/")[-1] if location else None,
+        "href": location if location.startswith("http") else f"{BASE_URL}{location}",
+    }
+
+
+@mcp.tool()
+def openproject_update_wiki_page(
+    project: str | int | None,
+    page_slug: str,
+    title: str | None = None,
+    content: str | None = None,
+    journal_notes: str | None = None,
+) -> dict[str, Any]:
+    """Update a wiki page through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        edit_page = client.get(f"{BASE_URL}{project_path}/wiki/{page_slug}/edit")
+        hidden = _extract_hidden_fields(edit_page.text)
+        current_title_match = re.search(r'name="page\[title\]"[^>]*value="([^"]*)"', edit_page.text)
+        current_text_match = re.search(r'<textarea[^>]*name="page\[text\]"[^>]*>(.*?)</textarea>', edit_page.text, flags=re.S)
+        response = client.post(
+            f"{BASE_URL}{project_path}/wiki/{page_slug}",
+            data={
+                "_method": "put",
+                "authenticity_token": hidden.get("authenticity_token") or _extract_authenticity_token(edit_page.text),
+                "page[lock_version]": hidden.get("page[lock_version]", "0"),
+                "page[parent_id]": hidden.get("page[parent_id]", ""),
+                "page[title]": title if title is not None else unescape(current_title_match.group(1)) if current_title_match else page_slug,
+                "page[text]": content if content is not None else unescape(current_text_match.group(1)) if current_text_match else "",
+                "page[journal_notes]": journal_notes or "",
+                "button": "Save",
+            },
+            headers={"Referer": str(edit_page.url)},
+            follow_redirects=False,
+        )
+    finally:
+        client.close()
+    location = response.headers.get("location", "")
+    return {
+        "slug": location.rstrip("/").split("/")[-1] if location else page_slug,
+        "title": title,
+        "href": location if location.startswith("http") else f"{BASE_URL}{location}" if location else None,
+    }
+
+
+@mcp.tool()
+def openproject_delete_wiki_page(project: str | int | None, page_slug: str) -> dict[str, Any]:
+    """Delete a wiki page through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        page = client.get(f"{BASE_URL}{project_path}/wiki/{page_slug}")
+        token = _extract_authenticity_token(page.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/wiki/{page_slug}",
+            data={"_method": "delete", "authenticity_token": token},
+            headers={"Referer": str(page.url)},
+        )
+    finally:
+        client.close()
+    return {"deleted": response.status_code < 400, "pageSlug": page_slug}
+
+
+@mcp.tool()
+def openproject_list_meetings(project: str | int | None = None, upcoming: bool = True) -> dict[str, Any]:
+    """List project meetings using the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        response = client.get(f"{BASE_URL}{project_path}/meetings", params={"upcoming": str(bool(upcoming)).lower()})
+    finally:
+        client.close()
+    meetings = []
+    for match in re.finditer(
+        r'<a href="/projects/[^"]+/meetings/(?P<id>\d+)"[^>]*>(?P<title>[^<]+)</a>.*?class="op-border-box-grid__row-item start_time[^"]*">\s*(?P<start>[^<]+)\s*</div>.*?class="op-border-box-grid__row-item duration[^"]*">\s*(?P<duration>.*?)\s*</div>.*?class="op-border-box-grid__row-item location[^"]*">\s*(?P<location>.*?)\s*</div>',
+        response.text,
+        flags=re.S,
+    ):
+        meetings.append(
+            {
+                "id": int(match.group("id")),
+                "title": _clean_html_text(match.group("title")),
+                "start": _clean_html_text(match.group("start")),
+                "duration": _clean_html_text(match.group("duration")),
+                "location": _clean_html_text(match.group("location")),
+                "href": f"{BASE_URL}{project_path}/meetings/{match.group('id')}",
+            }
+        )
+    return {"count": len(meetings), "upcoming": bool(upcoming), "meetings": meetings}
+
+
+@mcp.tool()
+def openproject_create_meeting(
+    project: str | int | None,
+    title: str,
+    start_date: str,
+    start_time: str,
+    duration_hours: str,
+    location: str | None = None,
+) -> dict[str, Any]:
+    """Create a one-time meeting through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        new_dialog = client.get(f"{BASE_URL}{project_path}/meetings/new_dialog", headers={"Accept": "*/*"})
+        token = _extract_authenticity_token(new_dialog.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/meetings",
+            data={
+                "authenticity_token": token,
+                "meeting[title]": title,
+                "meeting[location]": location or "",
+                "meeting[start_date]": start_date,
+                "meeting[start_time_hour]": start_time,
+                "meeting[duration]": duration_hours,
+            },
+            headers={"Referer": f"{BASE_URL}{project_path}/meetings"},
+            follow_redirects=False,
+        )
+    finally:
+        client.close()
+    location_header = response.headers.get("location", "")
+    match = re.search(r"/meetings/(\d+)", location_header)
+    return {
+        "id": int(match.group(1)) if match else None,
+        "title": title,
+        "startDate": start_date,
+        "startTime": start_time,
+        "durationHours": duration_hours,
+        "location": location or "",
+        "href": location_header if location_header.startswith("http") else f"{BASE_URL}{location_header}",
+    }
+
+
+@mcp.tool()
+def openproject_delete_meeting(project: str | int | None, meeting_id: int) -> dict[str, Any]:
+    """Delete a meeting through the OpenProject UI workflow."""
+    project_path = _project_ui_path(project)
+    client = _ui_session()
+    try:
+        dialog = client.get(
+            f"{BASE_URL}{project_path}/meetings/{int(meeting_id)}/delete_dialog",
+            headers={"Accept": "*/*"},
+        )
+        hidden = _extract_hidden_fields(dialog.text)
+        response = client.post(
+            f"{BASE_URL}{project_path}/meetings/{int(meeting_id)}",
+            data={
+                "_method": hidden.get("_method", "delete"),
+                "authenticity_token": hidden.get("authenticity_token") or _extract_authenticity_token(dialog.text),
+            },
+            headers={"Referer": str(dialog.url)},
+        )
+    finally:
+        client.close()
+    return {"deleted": response.status_code < 400, "meetingId": int(meeting_id)}
+
+
+@mcp.tool()
 def openproject_delete_resource(href_or_path: str) -> dict[str, Any]:
     """Delete any API resource by its API path or instance-local href."""
     normalized_path = _normalize_href(href_or_path)
@@ -1657,6 +2092,8 @@ def openproject_bulk_update_work_packages(
     due_date: str | None = None,
     percentage_done: int | None = None,
     note: str | None = None,
+    field_overrides: dict[str, Any] | None = None,
+    link_overrides: dict[str, Any] | None = None,
     notify: bool = True,
     stop_on_error: bool = False,
 ) -> dict[str, Any]:
@@ -1676,6 +2113,8 @@ def openproject_bulk_update_work_packages(
             due_date=due_date,
             percentage_done=percentage_done,
             note=note,
+            field_overrides=field_overrides,
+            link_overrides=link_overrides,
             notify=notify,
         ),
         stop_on_error=stop_on_error,
@@ -1814,6 +2253,8 @@ def openproject_bulk_update_by_query(
     due_date: str | None = None,
     percentage_done: int | None = None,
     note: str | None = None,
+    field_overrides: dict[str, Any] | None = None,
+    link_overrides: dict[str, Any] | None = None,
     notify: bool = True,
     stop_on_error: bool = False,
 ) -> dict[str, Any]:
@@ -1830,6 +2271,8 @@ def openproject_bulk_update_by_query(
         due_date=due_date,
         percentage_done=percentage_done,
         note=note,
+        field_overrides=field_overrides,
+        link_overrides=link_overrides,
         notify=notify,
         stop_on_error=stop_on_error,
     )

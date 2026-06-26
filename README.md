@@ -1,6 +1,6 @@
 # OpenProject Codex Plugin
 
-This plugin lets Codex work directly with any OpenProject instance through the OpenProject API, without relying on the OpenProject web UI for day-to-day project work.
+This plugin lets Codex work directly with any OpenProject instance through the OpenProject API and, where the public API is still thin, through authenticated OpenProject UI workflows.
 
 ## Current first-class tool coverage
 
@@ -19,12 +19,14 @@ This plugin lets Codex work directly with any OpenProject instance through the O
 - work package comments/activity
 - work package relations
 - work package watchers
-- work package attachments metadata and file links
+- binary attachment upload plus attachment metadata and deletion
+- work package file links
 - time entry list, create, update, delete
 - document list, fetch, update
 - news list, fetch, create, update, delete
-- wiki page fetch
-- meeting fetch by id
+- boards list, create, delete
+- wiki page list, fetch by slug, create, update, delete
+- meeting list, fetch by id, create, delete
 - bulk work package updates, comments, deletes, and watcher changes
 - bulk work package actions by saved query
 - bulk project membership changes for users and groups
@@ -42,6 +44,8 @@ OpenProject exposes an official `/mcp` endpoint, but it is currently read-only. 
 - `OPENPROJECT_BASIC_API_TOKEN_FILE` fallback secret-file path
 - `OPENPROJECT_BASE_URL` required
 - `OPENPROJECT_DEFAULT_PROJECT` optional
+- `OPENPROJECT_UI_USERNAME` and `OPENPROJECT_UI_PASSWORD` required for boards/wiki/meetings UI-backed tools
+- `OPENPROJECT_UI_USERNAME_FILE` and `OPENPROJECT_UI_PASSWORD_FILE` supported for secret-file storage
 
 ## Fallback pattern
 
@@ -82,9 +86,24 @@ python3 ./scripts/smoke_test.py
 
 This performs read-only checks against connection status, projects, roles, users, groups, and your assigned work.
 
+To exercise the live write paths against a disposable test set:
+
+```bash
+OPENPROJECT_SMOKE_WRITE=1 python3 ./scripts/smoke_test.py
+```
+
+That write smoke test creates and removes a temporary board, wiki page, meeting, and wiki/meeting attachments.
+
+Optional bulk work-package smoke:
+
+```bash
+OPENPROJECT_SMOKE_WRITE=1 OPENPROJECT_SMOKE_WORK_PACKAGE_BULK=1 python3 ./scripts/smoke_test.py
+```
+
+Use `OPENPROJECT_SMOKE_CUSTOM_OPTION_HREF` when your instance requires a specific custom-option link for new work packages.
+
 ## Known limits
 
-- Boards are not exposed as first-class tools here.
-- Wiki support is read-oriented in the public API surface used by this plugin.
-- Meetings are fetch-oriented unless your instance exposes additional writable endpoints.
-- Binary attachment upload is not yet wrapped as a friendly first-class helper; attachment metadata and deletion are supported, and file-link operations are supported.
+- Board card and column manipulation is still not wrapped as a first-class tool surface; board creation and deletion are covered.
+- Meeting editing beyond create/delete is still limited by the currently exposed instance workflows.
+- If an instance enforces required custom fields on work packages, use `link_overrides` and `field_overrides` on the work package tools to supply those extra values.
