@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
+from datetime import UTC, date, datetime, timedelta
 import json
 import mimetypes
 import os
@@ -10,6 +12,7 @@ import re
 from typing import Any
 from html import unescape
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -594,6 +597,175 @@ def _document_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "project": payload.get("_links", {}).get("project", {}).get("title"),
         "href": _link_href(payload, "self"),
     }
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _next_page_params(payload: dict[str, Any]) -> dict[str, Any] | None:
+    href = payload.get("_links", {}).get("nextByOffset", {}).get("href")
+    if not isinstance(href, str) or not href:
+        return None
+    parsed = urlparse(href)
+    query = parse_qs(parsed.query)
+    result: dict[str, Any] = {}
+    for key, values in query.items():
+        if not values:
+            continue
+        value = values[-1]
+        if key in {"offset", "pageSize"}:
+            try:
+                result[key] = int(value)
+                continue
+            except ValueError:
+                pass
+        result[key] = value
+    return result or None
+
+
+def _fetch_all_collection(path: str, *, params: dict[str, Any] | None = None, page_size: int = 100) -> list[dict[str, Any]]:
+    normalized_path = path
+    if normalized_path.startswith("/api/v3/"):
+        normalized_path = normalized_path.removeprefix("/api/v3")
+    request_params = dict(params or {})
+    request_params.setdefault("pageSize", max(1, min(page_size, 200)))
+    request_params.setdefault("offset", 1)
+    items: list[dict[str, Any]] = []
+    while True:
+        payload = _api_get(normalized_path, params=request_params)
+        items.extend(_collection_elements(payload))
+        next_params = _next_page_params(payload)
+        if next_params is None:
+            break
+        request_params = next_params
+    return items
+
+
+def _fetch_all_work_packages(
+    project: str | int | None = None,
+    *,
+    filters: list[dict[str, Any]] | None = None,
+    page_size: int = 100,
+) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {}
+    if filters:
+        params["filters"] = json.dumps(filters)
+    if project is None:
+        return _fetch_all_collection("/work_packages", params=params, page_size=page_size)
+    project_obj = _resolve_project(project)
+    return _fetch_all_collection(f"/projects/{project_obj['id']}/work_packages", params=params, page_size=page_size)
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
+    return slug or "report"
+
+
+def _report_output_path(prefix: str, file_format: str, output_path: str | None = None) -> Path:
+    if output_path:
+        return Path(output_path).expanduser().resolve()
+    return Path("/tmp") / f"{_slugify(prefix)}.{file_format}"
+
+
+def _svg_bar_chart(title: str, items: list[tuple[str, float]], *, color: str = "#1A67A3", width: int = 860) -> str:
+    max_value = max((value for _, value in items), default=0.0)
+    row_height = 28
+    left_pad = 220
+    chart_width = width - left_pad - 80
+    height = 90 + row_height * max(1, len(items))
+    rows: list[str] = []
+    for index, (label, value) in enumerate(items):
+        y = 50 + index * row_height
+        bar_width = 0 if max_value <= 0 else (value / max_value) * chart_width
+        rows.append(
+            f'<text x="12" y="{y + 14}" font-size="12" fill="#1f2937">{label}</text>'
+            f'<rect x="{left_pad}" y="{y}" width="{bar_width:.2f}" height="18" fill="{color}" rx="4" />'
+            f'<text x="{left_pad + bar_width + 8:.2f}" y="{y + 14}" font-size="12" fill="#111827">{value:.2f}</text>'
+        )
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+        f'<rect width="{width}" height="{height}" fill="#ffffff" />'
+        f'<text x="12" y="28" font-size="20" font-weight="700" fill="#111827">{title}</text>'
+        + "".join(rows)
+        + "</svg>"
+    )
+
+
+def _write_html_report(title: str, sections: list[dict[str, Any]], output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    blocks: list[str] = []
+    for section in sections:
+        table_html = ""
+        rows = section.get("rows")
+        if rows:
+            headers = list(rows[0].keys())
+            table_html = (
+                "<table><thead><tr>"
+                + "".join(f"<th>{header}</th>" for header in headers)
+                + "</tr></thead><tbody>"
+                + "".join(
+                    "<tr>" + "".join(f"<td>{row.get(header, '')}</td>" for header in headers) + "</tr>"
+                    for row in rows
+                )
+                + "</tbody></table>"
+            )
+        blocks.append(
+            f"<section><h2>{section['title']}</h2>"
+            + (f"<p>{section['summary']}</p>" if section.get("summary") else "")
+            + (section.get("svg", "") or "")
+            + table_html
+            + "</section>"
+        )
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8' />"
+        f"<title>{title}</title>"
+        "<style>body{font-family:Helvetica,Arial,sans-serif;margin:24px;color:#111827;background:#f8fafc}"
+        "h1{margin:0 0 24px}section{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;margin:0 0 20px}"
+        "table{border-collapse:collapse;width:100%;margin-top:16px}th,td{border:1px solid #e5e7eb;padding:8px;text-align:left;font-size:14px}"
+        "th{background:#f1f5f9}svg{max-width:100%;height:auto;display:block;margin-top:16px}</style></head><body>"
+        f"<h1>{title}</h1>{''.join(blocks)}</body></html>"
+    )
+    output_path.write_text(html, encoding="utf-8")
+    return output_path
+
+
+def _write_png_report(title: str, items: list[tuple[str, float]], output_path: Path) -> Path:
+    try:
+        import matplotlib.pyplot as plt
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PNG export requires matplotlib. Install project dependencies first.") from exc
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    labels = [label for label, _ in items] or ["No data"]
+    values = [value for _, value in items] or [0]
+    fig_height = max(4, 0.45 * len(labels) + 1.5)
+    fig, ax = plt.subplots(figsize=(12, fig_height))
+    ax.barh(labels, values, color="#1A67A3")
+    ax.set_title(title)
+    ax.invert_yaxis()
+    ax.set_xlabel("Count")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+    return output_path
 
 
 @mcp.tool()
@@ -2237,8 +2409,16 @@ def openproject_bulk_delete_memberships(
 
 
 def _query_work_package_ids(query_id: int, page_size: int = 200) -> list[int]:
-    payload = openproject_run_query(query_id=query_id, page_size=page_size, offset=1)
-    return [int(item["id"]) for item in payload.get("work_packages", []) if item.get("id") is not None]
+    work_packages = _query_work_packages(query_id=query_id, page_size=page_size)
+    return [int(item["id"]) for item in work_packages if item.get("id") is not None]
+
+
+def _query_work_packages(query_id: int, page_size: int = 100) -> list[dict[str, Any]]:
+    query_payload = _api_get(f"/queries/{int(query_id)}")
+    results_href = query_payload.get("_links", {}).get("results", {}).get("href")
+    if not results_href:
+        raise RuntimeError(f"Query {query_id} does not expose a results link.")
+    return _fetch_all_collection(_normalize_href(results_href), page_size=page_size)
 
 
 @mcp.tool()
@@ -2323,6 +2503,236 @@ def openproject_bulk_delete_by_query(
         work_package_ids=work_package_ids,
         stop_on_error=stop_on_error,
     )
+
+
+@mcp.tool()
+def openproject_report_assignee_workload(
+    project: str | int | None = None,
+    status_names: list[str] | None = None,
+    include_unassigned: bool = True,
+) -> dict[str, Any]:
+    """Aggregate visible work packages into an assignee workload report."""
+    filters = _filter_by_names("status", status_names)
+    work_packages = _fetch_all_work_packages(project=project, filters=filters or None)
+    buckets: dict[str, dict[str, Any]] = {}
+    for item in work_packages:
+        summary = _work_package_summary(item)
+        assignee = summary.get("assignee") or "Unassigned"
+        if assignee == "Unassigned" and not include_unassigned:
+            continue
+        bucket = buckets.setdefault(
+            assignee,
+            {
+                "assignee": assignee,
+                "total": 0,
+                "overdue": 0,
+                "statuses": Counter(),
+                "types": Counter(),
+            },
+        )
+        bucket["total"] += 1
+        bucket["statuses"][summary.get("status") or "Unknown"] += 1
+        bucket["types"][summary.get("type") or "Unknown"] += 1
+        due_date = _parse_iso_date(summary.get("dueDate"))
+        if due_date and due_date < date.today() and summary.get("status") not in {"Closed", "Resolved", "Done"}:
+            bucket["overdue"] += 1
+    rows = sorted(
+        (
+            {
+                "assignee": value["assignee"],
+                "total": value["total"],
+                "overdue": value["overdue"],
+                "topStatus": value["statuses"].most_common(1)[0][0] if value["statuses"] else None,
+                "topType": value["types"].most_common(1)[0][0] if value["types"] else None,
+            }
+            for value in buckets.values()
+        ),
+        key=lambda item: (-int(item["total"]), str(item["assignee"])),
+    )
+    return {
+        "project": _normalize_project_ref(project) if project is not None else DEFAULT_PROJECT,
+        "totalWorkPackages": len(work_packages),
+        "assignees": rows,
+    }
+
+
+@mcp.tool()
+def openproject_report_burndown(
+    query_id: int,
+    days: int = 14,
+) -> dict[str, Any]:
+    """Generate a simple snapshot burndown-style projection for a saved query."""
+    query_payload = _api_get(f"/queries/{int(query_id)}")
+    work_packages = [_work_package_summary(item) for item in _query_work_packages(query_id=query_id, page_size=100)]
+    today = date.today()
+    remaining_total = len(work_packages)
+    completed = 0
+    due_buckets: Counter[str] = Counter()
+    overdue = 0
+    for item in work_packages:
+        status = item.get("status") or ""
+        if status.lower() in {"closed", "resolved", "done"}:
+            completed += 1
+        due_date = _parse_iso_date(item.get("dueDate"))
+        if due_date is None:
+            due_buckets["No due date"] += 1
+        elif due_date < today:
+            overdue += 1
+            due_buckets["Overdue"] += 1
+        elif due_date <= today + timedelta(days=7):
+            due_buckets["Due in 7 days"] += 1
+        else:
+            due_buckets["Due later"] += 1
+    ideal_points = []
+    actual_points = []
+    for offset in range(max(1, days) + 1):
+        point_date = today + timedelta(days=offset)
+        ideal_remaining = max(0.0, remaining_total * (1 - (offset / max(1, days))))
+        actual_remaining = sum(
+            1
+            for item in work_packages
+            if (_parse_iso_date(item.get("dueDate")) or (today + timedelta(days=days + 1))) >= point_date
+        )
+        ideal_points.append({"date": point_date.isoformat(), "remaining": round(ideal_remaining, 2)})
+        actual_points.append({"date": point_date.isoformat(), "remaining": actual_remaining})
+    return {
+        "query": {
+            "id": query_payload.get("id"),
+            "name": query_payload.get("name"),
+            "href": _link_href(query_payload, "self"),
+        },
+        "scopeTotal": remaining_total,
+        "completedSnapshot": completed,
+        "openSnapshot": remaining_total - completed,
+        "overdueSnapshot": overdue,
+        "dueBuckets": dict(due_buckets),
+        "idealSeries": ideal_points,
+        "actualSeries": actual_points,
+    }
+
+
+@mcp.tool()
+def openproject_dashboard_overdue_by_team(
+    project: str | int | None = None,
+    team_mode: str = "assignee",
+) -> dict[str, Any]:
+    """Build an overdue dashboard grouped by assignee or status."""
+    filters = [{"dueDate": {"operator": "<t-", "values": ["0"]}}]
+    work_packages = _fetch_all_work_packages(project=project, filters=filters)
+    rows: dict[str, dict[str, Any]] = {}
+    for item in work_packages:
+        summary = _work_package_summary(item)
+        if (summary.get("status") or "").lower() in {"closed", "resolved", "done"}:
+            continue
+        if team_mode == "status":
+            team_key = summary.get("status") or "Unknown"
+        else:
+            team_key = summary.get("assignee") or "Unassigned"
+        bucket = rows.setdefault(
+            team_key,
+            {"team": team_key, "total": 0, "priorities": Counter(), "oldestDueDate": None, "sampleItems": []},
+        )
+        bucket["total"] += 1
+        bucket["priorities"][summary.get("priority") or "Unknown"] += 1
+        due_date = summary.get("dueDate")
+        if due_date and (bucket["oldestDueDate"] is None or due_date < bucket["oldestDueDate"]):
+            bucket["oldestDueDate"] = due_date
+        if len(bucket["sampleItems"]) < 5:
+            bucket["sampleItems"].append({"id": summary["id"], "subject": summary["subject"], "dueDate": due_date})
+    ordered = sorted(rows.values(), key=lambda item: (-int(item["total"]), str(item["team"])))
+    for item in ordered:
+        item["topPriority"] = item["priorities"].most_common(1)[0][0] if item["priorities"] else None
+        item["priorities"] = dict(item["priorities"])
+    return {
+        "project": _normalize_project_ref(project) if project is not None else DEFAULT_PROJECT,
+        "groupedBy": team_mode,
+        "teams": ordered,
+    }
+
+
+@mcp.tool()
+def openproject_export_project_health(
+    project: str | int | None = None,
+    file_format: str = "html",
+    output_path: str | None = None,
+) -> dict[str, Any]:
+    """Export a project health dashboard as HTML or PNG."""
+    work_packages = _fetch_all_work_packages(project=project)
+    today = date.today()
+    status_counter: Counter[str] = Counter()
+    assignee_overdue: Counter[str] = Counter()
+    due_bucket_counter: Counter[str] = Counter()
+    recent_updates: list[dict[str, Any]] = []
+    for item in work_packages:
+        summary = _work_package_summary(item)
+        status_counter[summary.get("status") or "Unknown"] += 1
+        due_date = _parse_iso_date(summary.get("dueDate"))
+        if due_date is None:
+            due_bucket_counter["No due date"] += 1
+        elif due_date < today:
+            due_bucket_counter["Overdue"] += 1
+            assignee_overdue[summary.get("assignee") or "Unassigned"] += 1
+        elif due_date <= today + timedelta(days=7):
+            due_bucket_counter["Due in 7 days"] += 1
+        else:
+            due_bucket_counter["Due later"] += 1
+        recent_updates.append(
+            {
+                "id": summary.get("id"),
+                "subject": summary.get("subject"),
+                "status": summary.get("status"),
+                "assignee": summary.get("assignee"),
+                "updatedAt": summary.get("updatedAt"),
+            }
+        )
+    recent_updates.sort(key=lambda item: _parse_iso_datetime(item.get("updatedAt")) or datetime.min.replace(tzinfo=UTC), reverse=True)
+    status_items = status_counter.most_common()
+    overdue_items = assignee_overdue.most_common()
+    due_items = due_bucket_counter.most_common()
+    normalized_format = file_format.strip().lower()
+    report_title = f"OpenProject health report: {_normalize_project_ref(project)}"
+    output = _report_output_path(f"{report_title}-{normalized_format}", normalized_format, output_path=output_path)
+    if normalized_format == "html":
+        _write_html_report(
+            report_title,
+            [
+                {
+                    "title": "Status distribution",
+                    "summary": f"{len(work_packages)} visible work packages in scope.",
+                    "svg": _svg_bar_chart("Status distribution", [(label, float(value)) for label, value in status_items]),
+                    "rows": [{"status": label, "count": value} for label, value in status_items],
+                },
+                {
+                    "title": "Overdue by assignee",
+                    "summary": "Only open overdue items are counted here.",
+                    "svg": _svg_bar_chart("Overdue by assignee", [(label, float(value)) for label, value in overdue_items]),
+                    "rows": [{"assignee": label, "overdue": value} for label, value in overdue_items],
+                },
+                {
+                    "title": "Due-date buckets",
+                    "svg": _svg_bar_chart("Due-date buckets", [(label, float(value)) for label, value in due_items], color="#0f766e"),
+                    "rows": [{"bucket": label, "count": value} for label, value in due_items],
+                },
+                {
+                    "title": "Recent updates",
+                    "rows": recent_updates[:15],
+                },
+            ],
+            output,
+        )
+    elif normalized_format == "png":
+        _write_png_report(report_title, [(label, float(value)) for label, value in status_items], output)
+    else:
+        raise RuntimeError("file_format must be 'html' or 'png'.")
+    return {
+        "project": _normalize_project_ref(project) if project is not None else DEFAULT_PROJECT,
+        "fileFormat": normalized_format,
+        "path": str(output),
+        "totalWorkPackages": len(work_packages),
+        "statusDistribution": dict(status_counter),
+        "overdueByAssignee": dict(assignee_overdue),
+        "dueBuckets": dict(due_bucket_counter),
+    }
 
 
 if __name__ == "__main__":

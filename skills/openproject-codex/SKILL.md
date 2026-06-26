@@ -15,10 +15,11 @@ The plugin is intended to cover common project-management actions directly and t
 - Default to the configured `OPENPROJECT_DEFAULT_PROJECT` when present, unless the user explicitly asks for another project.
 - Use `openproject_connection_status` first if credentials or connectivity are uncertain.
 - Use `openproject_list_types`, `openproject_list_statuses`, `openproject_list_priorities`, and `openproject_list_project_assignees` before write operations when a value needs to be discovered.
-- Use dedicated tools first for projects, users, groups, memberships, versions, categories, queries, work packages, relations, watchers, comments, documents, news, time entries, attachments, file links, boards, wiki pages, meetings, and bulk task operations.
+- Use dedicated tools first for projects, users, groups, memberships, versions, categories, queries, work packages, relations, watchers, comments, documents, news, time entries, attachments, file links, boards, wiki pages, meetings, reporting, and bulk task operations.
 - Prefer `openproject_my_work` for “my items” or “items assigned to me” requests.
 - Prefer the query tools when the user refers to saved views or wants bulk actions across a query result set.
 - Prefer the bulk tools for repeated edits instead of issuing many single-item calls one by one.
+- Prefer the reporting tools for workload, overdue, burndown, and project health export requests instead of assembling ad hoc summaries by hand.
 - If the user needs an OpenProject action that does not yet have a dedicated tool, use `openproject_call_api` against the relevant `/api/v3/...` endpoint instead of sending the user back to OpenProject UI.
 - The official OpenProject `/mcp` endpoint is read-only, so write operations should continue to use this plugin's API tools.
 - Boards, wiki pages, and meetings may use authenticated UI-backed workflows when the public API surface is incomplete; ensure the UI credential env vars are configured before relying on those tools.

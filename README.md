@@ -30,6 +30,10 @@ This plugin lets Codex work directly with any OpenProject instance through the O
 - bulk work package updates, comments, deletes, and watcher changes
 - bulk work package actions by saved query
 - bulk project membership changes for users and groups
+- assignee workload reports
+- saved-query burndown snapshots
+- overdue dashboards by assignee or status
+- project health export to HTML or PNG
 - generic authenticated OpenProject API calls
 
 ## Why this exists
@@ -101,6 +105,14 @@ OPENPROJECT_SMOKE_WRITE=1 OPENPROJECT_SMOKE_WORK_PACKAGE_BULK=1 python3 ./script
 ```
 
 Use `OPENPROJECT_SMOKE_CUSTOM_OPTION_HREF` when your instance requires a specific custom-option link for new work packages.
+
+## Reporting examples
+
+- `openproject_report_assignee_workload(project="pod-initiative")`
+- `openproject_report_burndown(query_id=123)`
+- `openproject_dashboard_overdue_by_team(project="pod-initiative")`
+- `openproject_export_project_health(project="pod-initiative", file_format="html")`
+- `openproject_export_project_health(project="pod-initiative", file_format="png")`
 
 ## Known limits
 
