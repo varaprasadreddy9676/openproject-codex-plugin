@@ -164,6 +164,32 @@ You usually do not need to call tool names manually. In normal use, you just ask
 
 ## Installation
 
+### Install through the Codex UI
+
+Use this if you want to share the plugin with your team through Codex's marketplace flow.
+
+In Codex:
+
+1. Open `Plugins`.
+2. Click `+` then `Add plugin marketplace`.
+3. Use:
+
+```text
+Source: https://github.com/varaprasadreddy9676/openproject-codex-plugin.git
+Git ref: main
+Sparse paths: .agents/plugins
+```
+
+4. Add the marketplace.
+5. Install `OpenProject Codex` from that marketplace.
+
+Important:
+
+- Do not point the marketplace dialog at `plugins/codex` or the repo root without the marketplace path.
+- This repository now exposes a Codex marketplace manifest at `.agents/plugins/marketplace.json`.
+
+### Install from a local clone
+
 ### 1. Clone the repository
 
 ```bash
@@ -348,11 +374,14 @@ without treating Codex as read-only.
 
 ## Repository Structure
 
-- `.codex-plugin/plugin.json` plugin metadata
-- `.mcp.json` MCP server wiring example
-- `scripts/openproject_mcp.py` MCP server implementation
-- `scripts/smoke_test.py` verification script
-- `skills/openproject-codex/SKILL.md` Codex skill guidance
+- `.agents/plugins/marketplace.json` repo-level Codex marketplace manifest
+- `plugins/openproject-codex/` installable plugin bundle used by the marketplace
+- `plugins/openproject-codex/.codex-plugin/plugin.json` plugin metadata
+- `plugins/openproject-codex/.mcp.json` MCP server wiring example
+- `plugins/openproject-codex/scripts/openproject_mcp.py` MCP server implementation
+- `plugins/openproject-codex/scripts/smoke_test.py` verification script
+- `plugins/openproject-codex/skills/openproject-codex/SKILL.md` Codex skill guidance
+- `.codex-plugin/plugin.json` root plugin manifest kept for direct local development compatibility
 
 ## License
 
