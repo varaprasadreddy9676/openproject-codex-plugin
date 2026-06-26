@@ -14,6 +14,8 @@ The plugin is intended to cover common project-management actions directly and t
 - Prefer the MCP tools from this plugin for project, team, membership, and work package operations.
 - Default to the configured `OPENPROJECT_DEFAULT_PROJECT` when present, unless the user explicitly asks for another project.
 - Use `openproject_connection_status` first if credentials or connectivity are uncertain.
+- If configuration is missing, use `openproject_setup_connection` to capture the base URL and API token directly from chat before attempting other actions.
+- Use `openproject_test_connection` or `openproject_whoami` after setup when you need a quick verification step.
 - Use `openproject_list_types`, `openproject_list_statuses`, `openproject_list_priorities`, and `openproject_list_project_assignees` before write operations when a value needs to be discovered.
 - Use dedicated tools first for projects, users, groups, memberships, versions, categories, queries, work packages, relations, watchers, comments, documents, news, time entries, attachments, file links, boards, wiki pages, meetings, reporting, and bulk task operations.
 - Prefer `openproject_my_work` for “my items” or “items assigned to me” requests.
@@ -33,6 +35,8 @@ The plugin is intended to cover common project-management actions directly and t
 - `OPENPROJECT_BASE_URL` is required.
 - `OPENPROJECT_DEFAULT_PROJECT` is optional.
 - `OPENPROJECT_UI_USERNAME` and `OPENPROJECT_UI_PASSWORD` are required for the boards/wiki/meetings UI-backed tools.
+
+The plugin can now persist this configuration locally through `openproject_setup_connection`, so the user does not have to edit `.mcp.json` manually on first use.
 
 ## Typical flow
 

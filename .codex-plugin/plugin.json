@@ -29,8 +29,8 @@
       "Interactive"
     ],
     "defaultPrompt": [
+      "Show OpenProject connection status and help me set it up.",
       "List my assigned work in OpenProject.",
-      "Assign a team to a project in OpenProject.",
       "Bulk update work packages from a saved query."
     ],
     "brandColor": "#0F766E"

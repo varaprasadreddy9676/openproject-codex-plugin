@@ -18,6 +18,29 @@ This plugin uses the OpenProject API where possible and falls back to authentica
 
 ![Project health report demo](assets/project-health-report-demo.png)
 
+## Dead-Simple Setup
+
+After installing the plugin, you can configure it directly from Codex chat.
+
+Example:
+
+- `@OpenProject show connection status`
+- `@OpenProject setup connection with base URL https://projects.medicsprime.in and this API token ...`
+
+The plugin now includes onboarding tools that can:
+
+- detect missing configuration without crashing
+- accept your OpenProject URL and API token from chat
+- save them locally for future use
+- verify the connection immediately
+
+Useful setup prompts:
+
+- `@OpenProject show connection status`
+- `@OpenProject set up OpenProject using base URL https://projects.medicsprime.in and API token <token>`
+- `@OpenProject test the current connection`
+- `@OpenProject who am I in OpenProject?`
+
 ## What This Plugin Is For
 
 Use this plugin when you want to do OpenProject work from inside Codex, such as:
@@ -248,6 +271,14 @@ Or file-backed equivalents:
 - `OPENPROJECT_UI_USERNAME_FILE`
 - `OPENPROJECT_UI_PASSWORD_FILE`
 
+You can also skip manual environment setup and configure the plugin from Codex chat through:
+
+- `openproject_setup_connection`
+- `openproject_connection_status`
+- `openproject_test_connection`
+- `openproject_clear_saved_connection`
+- `openproject_whoami`
+
 ## Recommended Secret Setup
 
 Example:
@@ -279,6 +310,13 @@ Examples:
 - “Use OpenProject and export a project health report for `pod-initiative` as HTML.”
 
 If the request maps to a tool the plugin exposes, Codex can do it directly.
+
+For first-time setup, you can do this directly in chat instead of editing files:
+
+1. Ask Codex to show OpenProject connection status.
+2. If setup is missing, ask Codex to configure OpenProject with your base URL and API token.
+3. Ask Codex to test the connection.
+4. Start using normal project-management prompts.
 
 ## Tooling Notes
 

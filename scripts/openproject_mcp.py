@@ -18,10 +18,18 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 
-BASE_URL = os.environ.get("OPENPROJECT_BASE_URL", "").rstrip("/")
-DEFAULT_PROJECT = os.environ.get("OPENPROJECT_DEFAULT_PROJECT", "").strip() or None
-API_ROOT = f"{BASE_URL}/api/v3" if BASE_URL else ""
 USER_AGENT = "openproject-codex-plugin/0.1.0"
+CONFIG_DIR = Path(os.environ.get("OPENPROJECT_CODEX_CONFIG_DIR", "~/.codex/openproject-codex")).expanduser()
+CONFIG_PATH = CONFIG_DIR / "config.json"
+PLACEHOLDER_BASE_URLS = {
+    "",
+    "https://your-openproject.example.com",
+    "http://your-openproject.example.com",
+}
+
+BASE_URL = ""
+DEFAULT_PROJECT: str | None = None
+API_ROOT = ""
 
 mcp = FastMCP(
     "openproject_codex",
@@ -33,9 +41,125 @@ mcp = FastMCP(
 )
 
 
+def _normalize_base_url(value: str | None) -> str:
+    normalized = (value or "").strip().rstrip("/")
+    if normalized in PLACEHOLDER_BASE_URLS:
+        return ""
+    return normalized
+
+
+def _normalize_optional(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    return normalized or None
+
+
+def _load_saved_config() -> dict[str, Any]:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _env_or_saved_value(env_key: str, saved: dict[str, Any], *, normalizer=None) -> Any:
+    env_value = os.environ.get(env_key)
+    value = env_value if env_value is not None else saved.get(env_key)
+    if normalizer is not None:
+        return normalizer(value)
+    return value
+
+
+def _refresh_runtime_config() -> dict[str, Any]:
+    global BASE_URL, DEFAULT_PROJECT, API_ROOT
+    saved = _load_saved_config()
+    BASE_URL = _env_or_saved_value("OPENPROJECT_BASE_URL", saved, normalizer=_normalize_base_url)
+    DEFAULT_PROJECT = _env_or_saved_value("OPENPROJECT_DEFAULT_PROJECT", saved, normalizer=_normalize_optional)
+    API_ROOT = f"{BASE_URL}/api/v3" if BASE_URL else ""
+    return {
+        "OPENPROJECT_BASE_URL": BASE_URL,
+        "OPENPROJECT_DEFAULT_PROJECT": DEFAULT_PROJECT,
+        "OPENPROJECT_API_TOKEN": _env_or_saved_value("OPENPROJECT_API_TOKEN", saved, normalizer=_normalize_optional),
+        "OPENPROJECT_BASIC_API_TOKEN": _env_or_saved_value(
+            "OPENPROJECT_BASIC_API_TOKEN",
+            saved,
+            normalizer=_normalize_optional,
+        ),
+        "OPENPROJECT_UI_USERNAME": _env_or_saved_value("OPENPROJECT_UI_USERNAME", saved, normalizer=_normalize_optional),
+        "OPENPROJECT_UI_PASSWORD": _env_or_saved_value("OPENPROJECT_UI_PASSWORD", saved, normalizer=_normalize_optional),
+    }
+
+
+def _persist_config(updates: dict[str, Any]) -> dict[str, Any]:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    current = _load_saved_config()
+    for key, value in updates.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+    CONFIG_PATH.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
+    return current
+
+
+def _redact(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _configuration_state() -> dict[str, Any]:
+    runtime = _refresh_runtime_config()
+    saved = _load_saved_config()
+    api_token = runtime.get("OPENPROJECT_API_TOKEN")
+    basic_token = runtime.get("OPENPROJECT_BASIC_API_TOKEN")
+    missing: list[str] = []
+    if not BASE_URL:
+        missing.append("base_url")
+    if not api_token and not basic_token and not _read_secret_from_env_file("OPENPROJECT_API_TOKEN_FILE") and not _read_secret_from_env_file("OPENPROJECT_BASIC_API_TOKEN_FILE"):
+        missing.append("api_token")
+    has_ui_creds = bool(
+        runtime.get("OPENPROJECT_UI_USERNAME")
+        and runtime.get("OPENPROJECT_UI_PASSWORD")
+    ) or bool(
+        _read_secret_from_env_file("OPENPROJECT_UI_USERNAME_FILE")
+        and _read_secret_from_env_file("OPENPROJECT_UI_PASSWORD_FILE")
+    )
+    return {
+        "configured": not missing,
+        "missing": missing,
+        "base_url": BASE_URL or None,
+        "default_project": DEFAULT_PROJECT,
+        "auth_mode": "bearer" if api_token else "basic" if basic_token else None,
+        "has_ui_credentials": has_ui_creds,
+        "saved_config_path": str(CONFIG_PATH),
+        "saved_keys": sorted(saved.keys()),
+        "token_preview": _redact(api_token or basic_token),
+    }
+
+
+def _setup_help_message(state: dict[str, Any] | None = None) -> str:
+    current = state or _configuration_state()
+    missing = current.get("missing", [])
+    missing_text = ", ".join(missing) if missing else "none"
+    return (
+        "OpenProject Codex is not configured yet. Missing: "
+        f"{missing_text}. Run openproject_setup_connection with your OpenProject base_url "
+        "and api_token. Optional fields: default_project, ui_username, ui_password."
+    )
+
+
 def _auth_headers() -> dict[str, str]:
-    token = os.environ.get("OPENPROJECT_API_TOKEN") or _read_secret_from_env_file("OPENPROJECT_API_TOKEN_FILE")
-    basic_token = os.environ.get("OPENPROJECT_BASIC_API_TOKEN") or _read_secret_from_env_file(
+    runtime = _refresh_runtime_config()
+    token = runtime.get("OPENPROJECT_API_TOKEN") or _read_secret_from_env_file("OPENPROJECT_API_TOKEN_FILE")
+    basic_token = runtime.get("OPENPROJECT_BASIC_API_TOKEN") or _read_secret_from_env_file(
         "OPENPROJECT_BASIC_API_TOKEN_FILE"
     )
     if token:
@@ -46,9 +170,8 @@ def _auth_headers() -> dict[str, str]:
         encoded = base64.b64encode(f"apikey:{basic_token}".encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {encoded}"}
     raise RuntimeError(
-        "Missing OpenProject credentials. Set OPENPROJECT_API_TOKEN "
-        "(preferred), OPENPROJECT_API_TOKEN_FILE, OPENPROJECT_BASIC_API_TOKEN, "
-        "or OPENPROJECT_BASIC_API_TOKEN_FILE."
+        "Missing OpenProject credentials. "
+        f"{_setup_help_message()}"
     )
 
 
@@ -73,14 +196,14 @@ def _headers() -> dict[str, str]:
 
 
 def _ui_auth() -> tuple[str, str]:
-    username = os.environ.get("OPENPROJECT_UI_USERNAME") or _read_secret_from_env_file("OPENPROJECT_UI_USERNAME_FILE")
-    password = os.environ.get("OPENPROJECT_UI_PASSWORD") or _read_secret_from_env_file("OPENPROJECT_UI_PASSWORD_FILE")
+    runtime = _refresh_runtime_config()
+    username = runtime.get("OPENPROJECT_UI_USERNAME") or _read_secret_from_env_file("OPENPROJECT_UI_USERNAME_FILE")
+    password = runtime.get("OPENPROJECT_UI_PASSWORD") or _read_secret_from_env_file("OPENPROJECT_UI_PASSWORD_FILE")
     if username and password:
         return username, password
     raise RuntimeError(
-        "Missing OpenProject UI credentials. Set OPENPROJECT_UI_USERNAME and "
-        "OPENPROJECT_UI_PASSWORD (or their *_FILE variants) to enable UI-backed "
-        "boards, wiki, and meeting tools."
+        "Missing OpenProject UI credentials. Run openproject_setup_connection with "
+        "ui_username and ui_password to enable UI-backed boards, wiki, and meeting tools."
     )
 
 
@@ -109,8 +232,9 @@ def _ui_session() -> httpx.Client:
 
 
 def _client() -> httpx.Client:
+    _refresh_runtime_config()
     if not BASE_URL:
-        raise RuntimeError("Missing OPENPROJECT_BASE_URL. Set it to your OpenProject instance URL.")
+        raise RuntimeError(_setup_help_message())
     return httpx.Client(headers=_headers(), timeout=30.0, follow_redirects=True)
 
 
@@ -769,16 +893,100 @@ def _write_png_report(title: str, items: list[tuple[str, float]], output_path: P
 
 
 @mcp.tool()
-def openproject_connection_status() -> dict[str, Any]:
-    """Return plugin configuration and verify API connectivity using the authenticated account."""
-    payload = _api_get("/")
-    return {
-        "base_url": BASE_URL,
-        "api_root": API_ROOT,
-        "default_project": DEFAULT_PROJECT,
-        "authenticated": True,
-        "instance": payload,
+def openproject_setup_connection(
+    base_url: str,
+    api_token: str,
+    default_project: str | None = None,
+    ui_username: str | None = None,
+    ui_password: str | None = None,
+    verify_connection: bool = True,
+) -> dict[str, Any]:
+    """Save OpenProject credentials locally so the plugin can be used immediately from Codex chat."""
+    updates: dict[str, Any] = {
+        "OPENPROJECT_BASE_URL": _normalize_base_url(base_url),
+        "OPENPROJECT_API_TOKEN": _normalize_optional(api_token),
     }
+    if default_project is not None:
+        updates["OPENPROJECT_DEFAULT_PROJECT"] = _normalize_optional(default_project)
+    if ui_username is not None:
+        updates["OPENPROJECT_UI_USERNAME"] = _normalize_optional(ui_username)
+    if ui_password is not None:
+        updates["OPENPROJECT_UI_PASSWORD"] = _normalize_optional(ui_password)
+    if not updates["OPENPROJECT_BASE_URL"]:
+        raise RuntimeError("base_url is required and must be a real OpenProject URL.")
+    if not updates["OPENPROJECT_API_TOKEN"]:
+        raise RuntimeError("api_token is required.")
+    _persist_config(updates)
+    status = openproject_connection_status(verify_api=verify_connection, verify_ui=False)
+    status["message"] = "OpenProject connection saved."
+    return status
+
+
+@mcp.tool()
+def openproject_clear_saved_connection(clear_ui_credentials: bool = True) -> dict[str, Any]:
+    """Remove locally saved OpenProject credentials from the plugin config file."""
+    updates: dict[str, Any] = {
+        "OPENPROJECT_BASE_URL": None,
+        "OPENPROJECT_API_TOKEN": None,
+        "OPENPROJECT_BASIC_API_TOKEN": None,
+        "OPENPROJECT_DEFAULT_PROJECT": None,
+    }
+    if clear_ui_credentials:
+        updates["OPENPROJECT_UI_USERNAME"] = None
+        updates["OPENPROJECT_UI_PASSWORD"] = None
+    _persist_config(updates)
+    return {
+        "cleared": True,
+        "config_path": str(CONFIG_PATH),
+        "connection": openproject_connection_status(verify_api=False, verify_ui=False),
+    }
+
+
+@mcp.tool()
+def openproject_connection_status(verify_api: bool = True, verify_ui: bool = False) -> dict[str, Any]:
+    """Return plugin configuration state and optionally verify API or UI connectivity."""
+    state = _configuration_state()
+    response: dict[str, Any] = {
+        "configured": state["configured"],
+        "missing": state["missing"],
+        "base_url": state["base_url"],
+        "api_root": API_ROOT or None,
+        "default_project": state["default_project"],
+        "auth_mode": state["auth_mode"],
+        "has_ui_credentials": state["has_ui_credentials"],
+        "saved_config_path": state["saved_config_path"],
+        "saved_keys": state["saved_keys"],
+        "token_preview": state["token_preview"],
+        "setup_required": not state["configured"],
+        "setup_message": _setup_help_message(state) if not state["configured"] else None,
+    }
+    if not state["configured"]:
+        return response
+    if verify_api:
+        try:
+            payload = _api_get("/")
+            response["api_connection"] = {"ok": True, "instance": payload}
+        except Exception as exc:
+            response["api_connection"] = {"ok": False, "error": str(exc)}
+    if verify_ui:
+        try:
+            with _ui_session() as client:
+                response["ui_connection"] = {"ok": True, "base_url": BASE_URL, "status_code": 200 if client else 0}
+        except Exception as exc:
+            response["ui_connection"] = {"ok": False, "error": str(exc)}
+    return response
+
+
+@mcp.tool()
+def openproject_test_connection(test_ui: bool = False) -> dict[str, Any]:
+    """Verify the currently saved OpenProject connection without changing configuration."""
+    return openproject_connection_status(verify_api=True, verify_ui=test_ui)
+
+
+@mcp.tool()
+def openproject_whoami() -> dict[str, Any]:
+    """Return the authenticated OpenProject user after configuration is complete."""
+    return openproject_get_user("me")
 
 
 @mcp.tool()
