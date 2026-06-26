@@ -1,6 +1,6 @@
 {
   "name": "openproject-codex",
-  "version": "0.1.0+codex.20260626122458",
+  "version": "0.1.1+codex.20260626220500",
   "description": "Codex plugin for managing OpenProject work, teams, content, and bulk workflows through the OpenProject API.",
   "author": {
     "name": "OpenProject Codex Contributors"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "OpenProject Codex",
     "shortDescription": "Manage projects, teams, and work in OpenProject from Codex.",
-    "longDescription": "OpenProject Codex connects Codex directly to the OpenProject API so you can inspect projects, users, groups, memberships, versions, categories, relations, watchers, queries, work packages, time entries, documents, news, attachments, and file links; create, update, delete, assign, and comment on work; perform bulk task operations; and manage common project-team workflows without working in the OpenProject UI.",
+    "longDescription": "OpenProject Codex connects Codex directly to OpenProject so teams can manage projects, memberships, work packages, boards, wiki pages, meetings, attachments, bulk workflows, and reporting from Codex instead of switching back to the OpenProject UI.",
     "developerName": "OpenProject Codex Contributors",
     "category": "Productivity",
     "capabilities": [
