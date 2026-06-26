@@ -1,65 +1,185 @@
 # OpenProject Codex Plugin
 
-This plugin lets Codex work directly with any OpenProject instance through the OpenProject API and, where the public API is still thin, through authenticated OpenProject UI workflows.
+`openproject-codex` is a Codex plugin that lets Codex work with OpenProject directly.
 
-## Current first-class tool coverage
+Instead of switching back and forth between Codex and the OpenProject UI, you can ask Codex to:
 
-- connection and project inspection
-- project create, update, delete
-- users and groups
-- roles and memberships
-- project members
-- project versions
-- project categories
-- query create, update, delete, run
-- work package listing and search
-- my assigned or authored work
-- work package detail and raw payload inspection
-- work package create, update, delete
-- work package comments/activity
-- work package relations
-- work package watchers
-- binary attachment upload plus attachment metadata and deletion
-- work package file links
-- time entry list, create, update, delete
-- document list, fetch, update
-- news list, fetch, create, update, delete
-- boards list, create, delete
-- wiki page list, fetch by slug, create, update, delete
-- meeting list, fetch by id, create, delete
-- bulk work package updates, comments, deletes, and watcher changes
-- bulk work package actions by saved query
-- bulk project membership changes for users and groups
+- list projects
+- inspect teams, users, and groups
+- assign people to projects
+- create and update work packages
+- comment on work
+- manage watchers
+- run bulk task operations
+- work with wiki pages, boards, and meetings
+- generate reports and export dashboards
+
+This plugin uses the OpenProject API where possible and falls back to authenticated OpenProject UI workflows where the public API surface is incomplete.
+
+## What This Plugin Is For
+
+Use this plugin when you want to do OpenProject work from inside Codex, such as:
+
+- “List the projects I can access.”
+- “Show my assigned work.”
+- “Assign these users to the POD initiative project.”
+- “Create 20 tasks and assign them to the implementation team.”
+- “Comment on every item in this saved query.”
+- “Generate an overdue dashboard by assignee.”
+- “Export a project health report as HTML or PNG.”
+
+## What Codex Can Do With It
+
+### Project and workspace management
+
+- inspect connection status
+- list projects
+- fetch project details
+- create projects
+- update projects
+- delete projects
+
+### People and team management
+
+- list users
+- fetch user details
+- list groups
+- fetch group details
+- list roles
+- list project members
+- list project assignees
+- create memberships
+- update memberships
+- delete memberships
+- bulk create, update, and delete memberships
+
+### Work package management
+
+- list work packages
+- search work packages
+- fetch full work package details
+- fetch raw work package payloads
+- create work packages
+- update work packages
+- delete work packages
+- add comments
+- create relations
+- manage watchers
+- list activities, relations, watchers, attachments, and file links
+- apply bulk update, comment, watcher, and delete operations
+- run the same bulk action against a saved query
+
+### Project structure and planning data
+
+- list project versions
+- list project categories
+- list saved queries
+- create, update, delete, and run saved queries
+
+### Time and content modules
+
+- list, create, update, and delete time entries
+- list and update documents
+- list, create, update, and delete news
+
+### Boards, wiki, and meetings
+
+- list boards
+- create boards
+- delete boards
+- list wiki pages
+- fetch wiki pages by slug
+- create wiki pages
+- update wiki pages
+- delete wiki pages
+- list meetings
+- fetch meetings by id
+- create meetings
+- delete meetings
+
+These flows use UI-backed automation where OpenProject does not expose a complete writable public API.
+
+### Attachments and links
+
+- upload binary attachments
+- inspect attachment metadata
+- delete attachments
+- list and manage work package file links
+
+### Reporting and exports
+
 - assignee workload reports
-- saved-query burndown snapshots
+- burndown-style snapshots from saved queries
 - overdue dashboards by assignee or status
-- project health export to HTML or PNG
-- generic authenticated OpenProject API calls
+- project health export to HTML
+- project health export to PNG
 
-## Why this exists
+## How This Works In Codex
 
-OpenProject exposes an official `/mcp` endpoint, but it is currently read-only. This plugin keeps read and write workflows inside Codex by using the authenticated OpenProject API directly.
+Once the plugin is installed and configured, Codex gets MCP tools from this repository.
 
-## Required environment
+That means you can ask for outcomes in plain language, and Codex can translate that into tool calls such as:
 
-- `OPENPROJECT_API_TOKEN` preferred
-- `OPENPROJECT_API_TOKEN_FILE` recommended for local secret-file storage
-- `OPENPROJECT_BASIC_API_TOKEN` fallback
-- `OPENPROJECT_BASIC_API_TOKEN_FILE` fallback secret-file path
-- `OPENPROJECT_BASE_URL` required
-- `OPENPROJECT_DEFAULT_PROJECT` optional
-- `OPENPROJECT_UI_USERNAME` and `OPENPROJECT_UI_PASSWORD` required for boards/wiki/meetings UI-backed tools
-- `OPENPROJECT_UI_USERNAME_FILE` and `OPENPROJECT_UI_PASSWORD_FILE` supported for secret-file storage
+- `openproject_list_projects`
+- `openproject_my_work`
+- `openproject_create_work_package`
+- `openproject_bulk_update_work_packages`
+- `openproject_report_assignee_workload`
+- `openproject_export_project_health`
 
-## Fallback pattern
+You usually do not need to call tool names manually. In normal use, you just ask Codex what you want done.
 
-If a required OpenProject feature does not yet have a dedicated tool, use `openproject_call_api` with the matching `/api/v3/...` endpoint rather than switching back to the browser UI.
+## Example Codex Prompts
 
-## Local verification
+### Day-to-day work
 
-Example `.mcp.json`:
+- “List my assigned work in OpenProject.”
+- “Show open tasks in `pod-initiative` assigned to me.”
+- “Create a task called `Prepare API handoff` in `pod-initiative`.”
+- “Add a comment to work package `1234` saying testing is complete.”
+
+### Team and project coordination
+
+- “List the members of `pod-initiative`.”
+- “Add user `20` to `pod-initiative` as `Member`.”
+- “Assign all tasks in this query to user `20`.”
+- “Bulk add a watcher to all tasks in this saved query.”
+
+### Reporting
+
+- “Show me assignee workload for `pod-initiative`.”
+- “Generate a burndown for query `131`.”
+- “Build a dashboard of overdue tasks by team.”
+- “Export project health charts as PNG.”
+- “Export project health charts as HTML.”
+
+### Content and planning
+
+- “Create a wiki page for the POD kickoff checklist.”
+- “List project meetings.”
+- “Create a meeting for tomorrow at 10:00.”
+- “Create a board for POD initiative tracking.”
+
+## Installation
+
+### 1. Clone the repository
 
 ```bash
+git clone https://github.com/varaprasadreddy9676/openproject-codex-plugin.git
+cd openproject-codex-plugin
+```
+
+### 2. Install Python dependencies
+
+```bash
+python3 -m pip install -e .
+```
+
+### 3. Configure the MCP server for Codex
+
+Create or update `.mcp.json`:
+
+```json
 {
   "mcpServers": {
     "openproject_codex": {
@@ -76,37 +196,126 @@ Example `.mcp.json`:
 }
 ```
 
-Install Python dependencies:
+### 4. Add credentials
+
+Minimum API configuration:
+
+- `OPENPROJECT_BASE_URL`
+- `OPENPROJECT_API_TOKEN` or `OPENPROJECT_API_TOKEN_FILE`
+
+Optional legacy fallback:
+
+- `OPENPROJECT_BASIC_API_TOKEN`
+- `OPENPROJECT_BASIC_API_TOKEN_FILE`
+
+Needed for UI-backed boards, wiki, and meeting tools:
+
+- `OPENPROJECT_UI_USERNAME`
+- `OPENPROJECT_UI_PASSWORD`
+
+Or file-backed equivalents:
+
+- `OPENPROJECT_UI_USERNAME_FILE`
+- `OPENPROJECT_UI_PASSWORD_FILE`
+
+## Recommended Secret Setup
+
+Example:
 
 ```bash
-python3 -m pip install -e .
+mkdir -p ~/.codex/secrets
+printf '%s' 'your-openproject-api-token' > ~/.codex/secrets/openproject-api-token
+printf '%s' 'your-openproject-username' > ~/.codex/secrets/openproject-ui-username
+printf '%s' 'your-openproject-password' > ~/.codex/secrets/openproject-ui-password
+chmod 600 ~/.codex/secrets/openproject-*
 ```
 
-Local verification:
+Then point `.mcp.json` at those files through environment variables.
+
+## Using It In Codex
+
+After the plugin is configured, restart or reload Codex so it picks up the MCP server.
+
+From there:
+
+1. Open a Codex thread.
+2. Ask for the OpenProject task in plain English.
+3. Codex will call the plugin tools behind the scenes.
+
+Examples:
+
+- “Use OpenProject and list the projects I can access.”
+- “Use OpenProject and show my assigned tasks.”
+- “Use OpenProject and export a project health report for `pod-initiative` as HTML.”
+
+If the request maps to a tool the plugin exposes, Codex can do it directly.
+
+## Tooling Notes
+
+### Generic API access
+
+If a specific OpenProject endpoint is not yet wrapped as a dedicated tool, Codex can still use:
+
+- `openproject_call_api`
+
+That makes it possible to hit other `/api/v3/...` endpoints without waiting for a first-class wrapper.
+
+### Work package custom fields
+
+Some OpenProject instances require extra custom fields on create or update.
+
+For those cases, the work package tools support:
+
+- `field_overrides`
+- `link_overrides`
+
+Use those to pass instance-specific fields without changing plugin code.
+
+## Local Verification
+
+### Read-only smoke test
 
 ```bash
 python3 ./scripts/smoke_test.py
 ```
 
-This performs read-only checks against connection status, projects, roles, users, groups, and your assigned work.
+This validates:
 
-To exercise the live write paths against a disposable test set:
+- API connectivity
+- project listing
+- role listing
+- user listing
+- group listing
+- “my work” retrieval
+
+### Live write smoke test
 
 ```bash
 OPENPROJECT_SMOKE_WRITE=1 python3 ./scripts/smoke_test.py
 ```
 
-That write smoke test creates and removes a temporary board, wiki page, meeting, and wiki/meeting attachments.
+This creates and removes disposable test artifacts for:
 
-Optional bulk work-package smoke:
+- boards
+- wiki pages
+- meetings
+- wiki and meeting attachments
+
+### Optional work package bulk smoke
 
 ```bash
 OPENPROJECT_SMOKE_WRITE=1 OPENPROJECT_SMOKE_WORK_PACKAGE_BULK=1 python3 ./scripts/smoke_test.py
 ```
 
-Use `OPENPROJECT_SMOKE_CUSTOM_OPTION_HREF` when your instance requires a specific custom-option link for new work packages.
+If your instance requires a specific custom option when creating work packages, set:
 
-## Reporting examples
+```bash
+OPENPROJECT_SMOKE_CUSTOM_OPTION_HREF=/api/v3/custom_options/21
+```
+
+## Reporting Examples
+
+These are direct tool examples that Codex can use:
 
 - `openproject_report_assignee_workload(project="pod-initiative")`
 - `openproject_report_burndown(query_id=123)`
@@ -114,8 +323,35 @@ Use `OPENPROJECT_SMOKE_CUSTOM_OPTION_HREF` when your instance requires a specifi
 - `openproject_export_project_health(project="pod-initiative", file_format="html")`
 - `openproject_export_project_health(project="pod-initiative", file_format="png")`
 
-## Known limits
+## Current Limits
 
-- Board card and column manipulation is still not wrapped as a first-class tool surface; board creation and deletion are covered.
-- Meeting editing beyond create/delete is still limited by the currently exposed instance workflows.
-- If an instance enforces required custom fields on work packages, use `link_overrides` and `field_overrides` on the work package tools to supply those extra values.
+- Board card and column manipulation is not yet wrapped as a first-class tool surface.
+- Meeting editing beyond create/delete is not yet first-class.
+- Some OpenProject instances expose project-scoped query routes differently; global query access is more reliable across instances.
+- Instance-specific permissions may still block destructive operations even when read and update access works.
+
+## Why This Plugin Exists
+
+OpenProject has an official `/mcp` endpoint, but in practice the writable surface is still limited for many real workflows.
+
+This plugin exists so teams can do real project operations from Codex now:
+
+- operational work
+- bulk work
+- reporting
+- dashboard export
+- project coordination
+
+without treating Codex as read-only.
+
+## Repository Structure
+
+- `.codex-plugin/plugin.json` plugin metadata
+- `.mcp.json` MCP server wiring example
+- `scripts/openproject_mcp.py` MCP server implementation
+- `scripts/smoke_test.py` verification script
+- `skills/openproject-codex/SKILL.md` Codex skill guidance
+
+## License
+
+MIT
