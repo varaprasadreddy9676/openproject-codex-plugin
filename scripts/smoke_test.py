@@ -18,7 +18,15 @@ def _load_module() -> Any:
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not load module from {MODULE_PATH}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as exc:
+        if exc.name == "mcp":
+            raise RuntimeError(
+                "Missing Python dependency 'mcp'. Install project dependencies first, "
+                "for example with 'python3 -m pip install -e .'"
+            ) from exc
+        raise
     return module
 
 

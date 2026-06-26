@@ -4,6 +4,12 @@
 
 1. Copy `.mcp.json` and set your own `OPENPROJECT_BASE_URL`.
 2. Create a token file, for example `~/.codex/secrets/openproject-api-token`.
+3. Install dependencies:
+
+```bash
+python3 -m pip install -e .
+```
+
 3. Run the smoke test:
 
 ```bash

@@ -11,6 +11,7 @@ This plugin lets Codex work directly with any OpenProject instance through the O
 - project members
 - project versions
 - project categories
+- query create, update, delete, run
 - work package listing and search
 - my assigned or authored work
 - work package detail and raw payload inspection
@@ -18,7 +19,14 @@ This plugin lets Codex work directly with any OpenProject instance through the O
 - work package comments/activity
 - work package relations
 - work package watchers
+- work package attachments metadata and file links
+- time entry list, create, update, delete
+- document list, fetch, update
+- news list, fetch, create, update, delete
+- wiki page fetch
+- meeting fetch by id
 - bulk work package updates, comments, deletes, and watcher changes
+- bulk work package actions by saved query
 - bulk project membership changes for users and groups
 - generic authenticated OpenProject API calls
 
@@ -60,6 +68,12 @@ Example `.mcp.json`:
 }
 ```
 
+Install Python dependencies:
+
+```bash
+python3 -m pip install -e .
+```
+
 Local verification:
 
 ```bash
@@ -67,3 +81,10 @@ python3 ./scripts/smoke_test.py
 ```
 
 This performs read-only checks against connection status, projects, roles, users, groups, and your assigned work.
+
+## Known limits
+
+- Boards are not exposed as first-class tools here.
+- Wiki support is read-oriented in the public API surface used by this plugin.
+- Meetings are fetch-oriented unless your instance exposes additional writable endpoints.
+- Binary attachment upload is not yet wrapped as a friendly first-class helper; attachment metadata and deletion are supported, and file-link operations are supported.

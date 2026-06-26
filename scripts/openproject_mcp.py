@@ -246,6 +246,12 @@ def _normalize_href(href: str) -> str:
     return href
 
 
+def _optional_href(path: str | None) -> dict[str, str] | None:
+    if not path:
+        return None
+    return {"href": path}
+
+
 def _filter_by_names(key: str, names: list[str] | None) -> list[dict[str, Any]]:
     if not names:
         return []
@@ -360,6 +366,146 @@ def _batch_result(
         "successCount": success_count,
         "errorCount": error_count,
         "results": results,
+    }
+
+
+def _query_columns_links(column_ids: list[str] | None) -> list[dict[str, str]] | None:
+    if not column_ids:
+        return None
+    return [{"href": f"/api/v3/queries/columns/{column_id}"} for column_id in column_ids]
+
+
+def _query_sort_links(sort_ids: list[str] | None) -> list[dict[str, str]] | None:
+    if not sort_ids:
+        return None
+    return [{"href": f"/api/v3/queries/sort_bys/{sort_id}"} for sort_id in sort_ids]
+
+
+def _query_highlight_links(column_ids: list[str] | None) -> list[dict[str, str]] | None:
+    if not column_ids:
+        return None
+    return [{"href": f"/api/v3/queries/columns/{column_id}"} for column_id in column_ids]
+
+
+def _query_group_link(group_id: str | None) -> dict[str, str] | None:
+    if not group_id:
+        return None
+    return {"href": f"/api/v3/queries/group_bys/{group_id}"}
+
+
+def _query_body(
+    *,
+    name: str | None = None,
+    project: str | int | None = None,
+    public: bool | None = None,
+    include_subprojects: bool | None = None,
+    sums: bool | None = None,
+    show_hierarchies: bool | None = None,
+    filters: list[dict[str, Any]] | None = None,
+    column_ids: list[str] | None = None,
+    sort_ids: list[str] | None = None,
+    group_by: str | None = None,
+    highlighted_attribute_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if public is not None:
+        body["public"] = bool(public)
+    if include_subprojects is not None:
+        body["includeSubprojects"] = bool(include_subprojects)
+    if sums is not None:
+        body["sums"] = bool(sums)
+    if show_hierarchies is not None:
+        body["showHierarchies"] = bool(show_hierarchies)
+    if filters is not None:
+        body["filters"] = filters
+    links: dict[str, Any] = {}
+    if project is not None:
+        links["project"] = {"href": _link_href(_resolve_project(project), "self")}
+    columns = _query_columns_links(column_ids)
+    if columns is not None:
+        links["columns"] = columns
+    sorts = _query_sort_links(sort_ids)
+    if sorts is not None:
+        links["sortBy"] = sorts
+    group = _query_group_link(group_by)
+    if group is not None:
+        links["groupBy"] = group
+    highlights = _query_highlight_links(highlighted_attribute_ids)
+    if highlights is not None:
+        links["highlightedAttributes"] = highlights
+    if links:
+        body["_links"] = links
+    return body
+
+
+def _attachment_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": payload.get("id"),
+        "fileName": payload.get("fileName"),
+        "fileSize": payload.get("fileSize"),
+        "contentType": payload.get("contentType"),
+        "description": payload.get("description"),
+        "createdAt": payload.get("createdAt"),
+        "href": _link_href(payload, "self"),
+        "downloadHref": payload.get("_links", {}).get("downloadLocation", {}).get("href"),
+        "container": payload.get("_links", {}).get("container", {}).get("title"),
+    }
+
+
+def _file_link_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": payload.get("id"),
+        "name": payload.get("name"),
+        "storageName": payload.get("storageName"),
+        "mimeType": payload.get("mimeType"),
+        "size": payload.get("size"),
+        "href": _link_href(payload, "self"),
+        "originId": payload.get("originId"),
+        "location": payload.get("_links", {}).get("origin", {}).get("href")
+        or payload.get("_links", {}).get("storageUrl", {}).get("href"),
+    }
+
+
+def _time_entry_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": payload.get("id"),
+        "spentOn": payload.get("spentOn"),
+        "hours": payload.get("hours"),
+        "ongoing": payload.get("ongoing"),
+        "comment": payload.get("comment"),
+        "project": payload.get("_links", {}).get("project", {}).get("title"),
+        "entity": payload.get("_links", {}).get("entity", {}).get("title"),
+        "activity": payload.get("_links", {}).get("activity", {}).get("title"),
+        "user": payload.get("_links", {}).get("user", {}).get("title"),
+        "href": _link_href(payload, "self"),
+    }
+
+
+def _news_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": payload.get("id"),
+        "title": payload.get("title"),
+        "summary": payload.get("summary"),
+        "description": payload.get("description"),
+        "createdAt": payload.get("createdAt"),
+        "updatedAt": payload.get("updatedAt"),
+        "project": payload.get("_links", {}).get("project", {}).get("title"),
+        "author": payload.get("_links", {}).get("author", {}).get("title"),
+        "href": _link_href(payload, "self"),
+    }
+
+
+def _document_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": payload.get("id"),
+        "title": payload.get("title"),
+        "description": payload.get("description"),
+        "createdAt": payload.get("createdAt"),
+        "updatedAt": payload.get("updatedAt"),
+        "project": payload.get("_links", {}).get("project", {}).get("title"),
+        "href": _link_href(payload, "self"),
     }
 
 
@@ -804,6 +950,76 @@ def openproject_get_query(query_id: int) -> dict[str, Any]:
 
 
 @mcp.tool()
+def openproject_create_query(
+    name: str,
+    project: str | int | None = None,
+    public: bool = False,
+    include_subprojects: bool = True,
+    sums: bool = False,
+    show_hierarchies: bool = True,
+    filters: list[dict[str, Any]] | None = None,
+    column_ids: list[str] | None = None,
+    sort_ids: list[str] | None = None,
+    group_by: str | None = None,
+    highlighted_attribute_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create a saved query."""
+    body = _query_body(
+        name=name,
+        project=project,
+        public=public,
+        include_subprojects=include_subprojects,
+        sums=sums,
+        show_hierarchies=show_hierarchies,
+        filters=filters,
+        column_ids=column_ids,
+        sort_ids=sort_ids,
+        group_by=group_by,
+        highlighted_attribute_ids=highlighted_attribute_ids,
+    )
+    return _api_post("/queries", body=body)
+
+
+@mcp.tool()
+def openproject_update_query(
+    query_id: int,
+    name: str | None = None,
+    project: str | int | None = None,
+    public: bool | None = None,
+    include_subprojects: bool | None = None,
+    sums: bool | None = None,
+    show_hierarchies: bool | None = None,
+    filters: list[dict[str, Any]] | None = None,
+    column_ids: list[str] | None = None,
+    sort_ids: list[str] | None = None,
+    group_by: str | None = None,
+    highlighted_attribute_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """Update a saved query."""
+    body = _query_body(
+        name=name,
+        project=project,
+        public=public,
+        include_subprojects=include_subprojects,
+        sums=sums,
+        show_hierarchies=show_hierarchies,
+        filters=filters,
+        column_ids=column_ids,
+        sort_ids=sort_ids,
+        group_by=group_by,
+        highlighted_attribute_ids=highlighted_attribute_ids,
+    )
+    return _api_patch(f"/queries/{int(query_id)}", body=body)
+
+
+@mcp.tool()
+def openproject_delete_query(query_id: int) -> dict[str, Any]:
+    """Delete a saved query."""
+    result = _api_delete(f"/queries/{int(query_id)}")
+    return {"deleted": True, "queryId": int(query_id), "result": result}
+
+
+@mcp.tool()
 def openproject_run_query(query_id: int, page_size: int = 50, offset: int = 1) -> dict[str, Any]:
     """Run a saved query and return its work package results."""
     query_payload = _api_get(f"/queries/{int(query_id)}")
@@ -1003,6 +1219,75 @@ def openproject_remove_watcher(work_package_id: int, user_id: int) -> dict[str, 
 
 
 @mcp.tool()
+def openproject_list_work_package_attachments(work_package_id: int, page_size: int = 100) -> dict[str, Any]:
+    """List attachments for a work package."""
+    payload = _api_get(
+        f"/work_packages/{int(work_package_id)}/attachments",
+        params={"pageSize": max(1, min(page_size, 200))},
+    )
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "attachments": [_attachment_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_list_work_package_file_links(work_package_id: int, page_size: int = 100) -> dict[str, Any]:
+    """List file links for a work package."""
+    payload = _api_get(
+        f"/work_packages/{int(work_package_id)}/file_links",
+        params={"pageSize": max(1, min(page_size, 200))},
+    )
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "fileLinks": [_file_link_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_create_work_package_file_links(
+    work_package_id: int,
+    file_links: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Create file links for a work package using the OpenProject storage/file-link model."""
+    body = {"_type": "Collection", "_embedded": {"elements": file_links}}
+    payload = _api_post(f"/work_packages/{int(work_package_id)}/file_links", body=body)
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "fileLinks": [_file_link_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_get_attachment(attachment_id: int) -> dict[str, Any]:
+    """Fetch attachment metadata."""
+    return _attachment_summary(_api_get(f"/attachments/{int(attachment_id)}"))
+
+
+@mcp.tool()
+def openproject_delete_attachment(attachment_id: int) -> dict[str, Any]:
+    """Delete an attachment."""
+    result = _api_delete(f"/attachments/{int(attachment_id)}")
+    return {"deleted": True, "attachmentId": int(attachment_id), "result": result}
+
+
+@mcp.tool()
+def openproject_get_file_link(file_link_id: int) -> dict[str, Any]:
+    """Fetch a file link."""
+    return _file_link_summary(_api_get(f"/file_links/{int(file_link_id)}"))
+
+
+@mcp.tool()
+def openproject_delete_file_link(file_link_id: int) -> dict[str, Any]:
+    """Delete a file link."""
+    result = _api_delete(f"/file_links/{int(file_link_id)}")
+    return {"deleted": True, "fileLinkId": int(file_link_id), "result": result}
+
+
+@mcp.tool()
 def openproject_create_work_package(
     subject: str,
     project: str | int | None = None,
@@ -1145,6 +1430,211 @@ def openproject_add_comment(work_package_id: int, comment: str, notify: bool = T
         "user": payload.get("_links", {}).get("user", {}).get("title"),
         "workPackage": payload.get("_links", {}).get("workPackage", {}).get("href"),
     }
+
+
+@mcp.tool()
+def openproject_list_time_entries(
+    project: str | int | None = None,
+    work_package_id: int | None = None,
+    user_id: int | str | None = None,
+    page_size: int = 50,
+    offset: int = 1,
+) -> dict[str, Any]:
+    """List time entries with optional project, work package, or user filters."""
+    filters: list[dict[str, Any]] = []
+    if project is not None:
+        filters.append({"project": {"operator": "=", "values": [str(_project_id(project))]}})
+    if work_package_id is not None:
+        filters.append({"entity_id": {"operator": "=", "values": [str(int(work_package_id))]}})
+        filters.append({"entity_type": {"operator": "=", "values": ["WorkPackage"]}})
+    if user_id is not None:
+        filters.append({"user": {"operator": "=", "values": [str(user_id)]}})
+    payload = _api_get(
+        "/time_entries",
+        params={
+            "pageSize": max(1, min(page_size, 200)),
+            "offset": max(1, offset),
+            "filters": json.dumps(filters),
+        },
+    )
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "timeEntries": [_time_entry_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_get_time_entry(time_entry_id: int) -> dict[str, Any]:
+    """Fetch a time entry."""
+    return _time_entry_summary(_api_get(f"/time_entries/{int(time_entry_id)}"))
+
+
+@mcp.tool()
+def openproject_create_time_entry(
+    spent_on: str,
+    hours: str,
+    project: str | int,
+    work_package_id: int,
+    comment: str | None = None,
+    ongoing: bool = False,
+    activity_id: int | None = None,
+    user_id: int | str | None = None,
+) -> dict[str, Any]:
+    """Create a time entry for a work package."""
+    body: dict[str, Any] = {
+        "spentOn": spent_on,
+        "hours": hours,
+        "ongoing": bool(ongoing),
+        "_links": {
+            "project": {"href": _link_href(_resolve_project(project), "self")},
+            "entity": {"href": f"/api/v3/work_packages/{int(work_package_id)}"},
+        },
+    }
+    if comment is not None:
+        body["comment"] = _formattable(comment)
+    if activity_id is not None:
+        body["_links"]["activity"] = {"href": f"/api/v3/time_entries/activity/{int(activity_id)}"}
+    if user_id is not None:
+        body["_links"]["user"] = {"href": f"/api/v3/users/{user_id}"}
+    return _time_entry_summary(_api_post("/time_entries", body=body))
+
+
+@mcp.tool()
+def openproject_update_time_entry(
+    time_entry_id: int,
+    spent_on: str | None = None,
+    hours: str | None = None,
+    comment: str | None = None,
+    ongoing: bool | None = None,
+    activity_id: int | None = None,
+) -> dict[str, Any]:
+    """Update a time entry."""
+    body: dict[str, Any] = {}
+    if spent_on is not None:
+        body["spentOn"] = spent_on
+    if hours is not None:
+        body["hours"] = hours
+    if comment is not None:
+        body["comment"] = _formattable(comment)
+    if ongoing is not None:
+        body["ongoing"] = bool(ongoing)
+    if activity_id is not None:
+        body.setdefault("_links", {})["activity"] = {"href": f"/api/v3/time_entries/activity/{int(activity_id)}"}
+    return _time_entry_summary(_api_patch(f"/time_entries/{int(time_entry_id)}", body=body))
+
+
+@mcp.tool()
+def openproject_delete_time_entry(time_entry_id: int) -> dict[str, Any]:
+    """Delete a time entry."""
+    result = _api_delete(f"/time_entries/{int(time_entry_id)}")
+    return {"deleted": True, "timeEntryId": int(time_entry_id), "result": result}
+
+
+@mcp.tool()
+def openproject_list_documents(page_size: int = 50, offset: int = 1) -> dict[str, Any]:
+    """List documents."""
+    payload = _api_get("/documents", params={"pageSize": max(1, min(page_size, 200)), "offset": max(1, offset)})
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "documents": [_document_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_get_document(document_id: int) -> dict[str, Any]:
+    """Fetch a document."""
+    payload = _api_get(f"/documents/{int(document_id)}")
+    result = _document_summary(payload)
+    attachments = payload.get("_embedded", {}).get("attachments", {})
+    if attachments:
+        result["attachments"] = [_attachment_summary(item) for item in attachments.get("_embedded", {}).get("elements", [])]
+    return result
+
+
+@mcp.tool()
+def openproject_update_document(document_id: int, title: str | None = None, description: str | None = None) -> dict[str, Any]:
+    """Update a document."""
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if description is not None:
+        body["description"] = {"raw": description}
+    return _document_summary(_api_patch(f"/documents/{int(document_id)}", body=body))
+
+
+@mcp.tool()
+def openproject_list_news(page_size: int = 50, offset: int = 1) -> dict[str, Any]:
+    """List news items."""
+    payload = _api_get("/news", params={"pageSize": max(1, min(page_size, 200)), "offset": max(1, offset)})
+    return {
+        "total": payload.get("total"),
+        "count": payload.get("count"),
+        "news": [_news_summary(item) for item in _collection_elements(payload)],
+    }
+
+
+@mcp.tool()
+def openproject_get_news(news_id: int) -> dict[str, Any]:
+    """Fetch a news item."""
+    return _news_summary(_api_get(f"/news/{int(news_id)}"))
+
+
+@mcp.tool()
+def openproject_create_news(
+    project: str | int,
+    title: str,
+    summary: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Create a news item."""
+    body: dict[str, Any] = {
+        "title": title,
+        "_links": {"project": {"href": _link_href(_resolve_project(project), "self")}},
+    }
+    if summary is not None:
+        body["summary"] = summary
+    if description is not None:
+        body["description"] = _formattable(description)
+    return _news_summary(_api_post("/news", body=body))
+
+
+@mcp.tool()
+def openproject_update_news(
+    news_id: int,
+    title: str | None = None,
+    summary: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any]:
+    """Update a news item."""
+    body: dict[str, Any] = {}
+    if title is not None:
+        body["title"] = title
+    if summary is not None:
+        body["summary"] = summary
+    if description is not None:
+        body["description"] = _formattable(description)
+    return _news_summary(_api_patch(f"/news/{int(news_id)}", body=body))
+
+
+@mcp.tool()
+def openproject_delete_news(news_id: int) -> dict[str, Any]:
+    """Delete a news item."""
+    result = _api_delete(f"/news/{int(news_id)}")
+    return {"deleted": True, "newsId": int(news_id), "result": result}
+
+
+@mcp.tool()
+def openproject_get_wiki_page(page_id: str) -> dict[str, Any]:
+    """Fetch a wiki page by id."""
+    return _api_get(f"/wiki_pages/{page_id}")
+
+
+@mcp.tool()
+def openproject_get_meeting(meeting_id: int) -> dict[str, Any]:
+    """Fetch a meeting page by id."""
+    return _api_get(f"/meetings/{int(meeting_id)}")
 
 
 @mcp.tool()
@@ -1303,6 +1793,91 @@ def openproject_bulk_delete_memberships(
         "bulk_delete_memberships",
         inputs,
         lambda item: openproject_delete_membership(item["membership_id"]),
+        stop_on_error=stop_on_error,
+    )
+
+
+def _query_work_package_ids(query_id: int, page_size: int = 200) -> list[int]:
+    payload = openproject_run_query(query_id=query_id, page_size=page_size, offset=1)
+    return [int(item["id"]) for item in payload.get("work_packages", []) if item.get("id") is not None]
+
+
+@mcp.tool()
+def openproject_bulk_update_by_query(
+    query_id: int,
+    subject: str | None = None,
+    description: str | None = None,
+    assignee_id: int | None = None,
+    status_name: str | None = None,
+    priority_name: str | None = None,
+    start_date: str | None = None,
+    due_date: str | None = None,
+    percentage_done: int | None = None,
+    note: str | None = None,
+    notify: bool = True,
+    stop_on_error: bool = False,
+) -> dict[str, Any]:
+    """Apply the same work-package update to every item returned by a saved query."""
+    work_package_ids = _query_work_package_ids(query_id)
+    return openproject_bulk_update_work_packages(
+        work_package_ids=work_package_ids,
+        subject=subject,
+        description=description,
+        assignee_id=assignee_id,
+        status_name=status_name,
+        priority_name=priority_name,
+        start_date=start_date,
+        due_date=due_date,
+        percentage_done=percentage_done,
+        note=note,
+        notify=notify,
+        stop_on_error=stop_on_error,
+    )
+
+
+@mcp.tool()
+def openproject_bulk_comment_by_query(
+    query_id: int,
+    comment: str,
+    notify: bool = True,
+    stop_on_error: bool = False,
+) -> dict[str, Any]:
+    """Add the same comment to every work package returned by a saved query."""
+    work_package_ids = _query_work_package_ids(query_id)
+    return openproject_bulk_add_comment(
+        work_package_ids=work_package_ids,
+        comment=comment,
+        notify=notify,
+        stop_on_error=stop_on_error,
+    )
+
+
+@mcp.tool()
+def openproject_bulk_watch_by_query(
+    query_id: int,
+    user_id: int,
+    action: str = "add",
+    stop_on_error: bool = False,
+) -> dict[str, Any]:
+    """Add or remove the same watcher across all work packages returned by a saved query."""
+    work_package_ids = _query_work_package_ids(query_id)
+    return openproject_bulk_manage_watchers(
+        work_package_ids=work_package_ids,
+        user_id=user_id,
+        action=action,
+        stop_on_error=stop_on_error,
+    )
+
+
+@mcp.tool()
+def openproject_bulk_delete_by_query(
+    query_id: int,
+    stop_on_error: bool = False,
+) -> dict[str, Any]:
+    """Delete every work package returned by a saved query."""
+    work_package_ids = _query_work_package_ids(query_id)
+    return openproject_bulk_delete_work_packages(
+        work_package_ids=work_package_ids,
         stop_on_error=stop_on_error,
     )
 
