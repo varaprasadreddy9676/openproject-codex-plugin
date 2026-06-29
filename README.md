@@ -191,6 +191,8 @@ You usually do not need to call tool names manually. In normal use, you just ask
 
 Use this if you want to share the plugin with your team through Codex's marketplace flow.
 
+This is the supported easy-install path. The marketplace is now self-contained under `.agents/plugins`, so you only need one sparse path.
+
 In Codex:
 
 1. Open `Plugins`.
@@ -209,7 +211,9 @@ Sparse paths: .agents/plugins
 Important:
 
 - Do not point the marketplace dialog at `plugins/codex` or the repo root without the marketplace path.
-- This repository now exposes a Codex marketplace manifest at `.agents/plugins/marketplace.json`.
+- This repository exposes a self-contained Codex marketplace at `.agents/plugins/marketplace.json`.
+- You do not need a second sparse path for `plugins/openproject-codex`.
+- If you added an older copy of this marketplace before June 29, 2026, remove it and add it again so Codex fetches the self-contained layout.
 
 ### Install from a local clone
 
@@ -415,7 +419,8 @@ without treating Codex as read-only.
 ## Repository Structure
 
 - `.agents/plugins/marketplace.json` repo-level Codex marketplace manifest
-- `plugins/openproject-codex/` installable plugin bundle used by the marketplace
+- `.agents/plugins/plugins/openproject-codex/` self-contained installable plugin bundle used by the marketplace
+- `plugins/openproject-codex/` local development copy of the plugin bundle
 - `plugins/openproject-codex/.codex-plugin/plugin.json` plugin metadata
 - `plugins/openproject-codex/.mcp.json` MCP server wiring example
 - `plugins/openproject-codex/scripts/openproject_mcp.py` MCP server implementation
