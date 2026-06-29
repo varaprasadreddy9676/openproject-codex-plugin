@@ -187,11 +187,88 @@ You usually do not need to call tool names manually. In normal use, you just ask
 
 ## Installation
 
-### Install through the Codex UI
+### Recommended: Use as a Custom MCP Server
 
-Use this if you want to share the plugin with your team through Codex's marketplace flow.
+This is the recommended setup for teams because it is the most reliable path in Codex.
 
-This is the supported easy-install path. The marketplace is now self-contained under `.agents/plugins`, so you only need one sparse path.
+Start here:
+
+1. Clone the repository to your machine.
+2. In Codex, choose `Plugins` -> `Connect to a custom MCP`.
+3. Point Codex to the local `scripts/openproject_mcp.py` file.
+4. Configure OpenProject in chat by pasting your own token.
+
+#### Step 1: Clone the repository
+
+Clone the repo anywhere you like. These are the recommended locations:
+
+- macOS/Linux: `~/Documents/GitHub/openproject-codex-plugin`
+- Windows: `C:\Users\<your-user>\Documents\GitHub\openproject-codex-plugin`
+
+Clone command:
+
+```bash
+git clone https://github.com/varaprasadreddy9676/openproject-codex-plugin.git
+```
+
+#### Step 2: Connect it in Codex
+
+In Codex:
+
+1. Open `Plugins`.
+2. Click `Connect to a custom MCP`.
+3. Choose `STDIO`.
+4. Fill the form like this.
+
+macOS/Linux:
+
+- `Name`: `OpenProject Codex`
+- `Command to launch`: `python3`
+- `Arguments`: `/absolute/path/to/openproject-codex-plugin/scripts/openproject_mcp.py`
+
+Windows:
+
+- `Name`: `OpenProject Codex`
+- `Command to launch`: `python`
+- `Arguments`: `C:\absolute\path\to\openproject-codex-plugin\scripts\openproject_mcp.py`
+
+Examples:
+
+- macOS: `/Users/sai/Documents/GitHub/openproject-codex-plugin/scripts/openproject_mcp.py`
+- Linux: `/home/alex/Documents/GitHub/openproject-codex-plugin/scripts/openproject_mcp.py`
+- Windows: `C:\Users\Alex\Documents\GitHub\openproject-codex-plugin\scripts\openproject_mcp.py`
+
+Optional environment variable:
+
+- `OPENPROJECT_BASE_URL = https://projects.medicsprime.in`
+
+You can also leave environment variables empty and configure the connection fully in chat.
+
+#### Step 3: Configure it in chat
+
+After connecting the MCP server, open a new Codex thread and say:
+
+- `show OpenProject connection status`
+- `set up OpenProject using base URL https://projects.medicsprime.in and API token <your-token>`
+
+Then use it normally:
+
+- `list my OpenProject projects`
+- `show my assigned work`
+- `create a task in pod-initiative`
+
+Important:
+
+- Each user should use their own OpenProject API token.
+- The path to `scripts/openproject_mcp.py` is different for each person because it depends on where they cloned the repo.
+- What stays the same is the repo name and the file path inside it:
+  `openproject-codex-plugin/scripts/openproject_mcp.py`
+
+### Optional: Install through the Codex Plugin UI
+
+Use this only if you specifically want the plugin marketplace flow.
+
+The marketplace is self-contained under `.agents/plugins`, so you only need one sparse path.
 
 In Codex:
 
@@ -215,7 +292,7 @@ Important:
 - You do not need a second sparse path for `plugins/openproject-codex`.
 - If you added an older copy of this marketplace before June 29, 2026, remove it and add it again so Codex fetches the self-contained layout.
 
-### Install from a local clone
+### Local Development Setup
 
 ### 1. Clone the repository
 
@@ -232,7 +309,7 @@ python3 -m pip install -e .
 
 If you install through the Codex marketplace, the plugin now starts without a first-run dependency install. A manual `pip install` is still useful for local development, but it is not required just to connect the plugin in Codex.
 
-### 3. Configure the MCP server for Codex
+### 3. Configure the MCP server for Codex manually
 
 Create or update `.mcp.json`:
 
